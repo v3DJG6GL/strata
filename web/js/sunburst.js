@@ -21,8 +21,6 @@
   var U = global.Util;
   var d3 = global.d3;
 
-  /* Maximum rings the partition lays out; we only paint ~2.5 at a time. */
-  var MAX_DEPTH = 64;
   /* Inline label area threshold (fraction of the ring band's area). */
   var LABEL_AREA = 0.03;
   /* Zoom transition duration. */
@@ -260,7 +258,11 @@
         d.data = d.data.data;
       });
 
-      d3.partition().size([2 * Math.PI, MAX_DEPTH])(h);
+      /* size[1] MUST be (height + 1): it makes d3.partition emit integer
+       * ring depths for y0/y1 (0,1,2,…). arcVisible() and the arc radii
+       * depend on that — a fixed cap here makes every arc fail y1<=3 and
+       * render fully transparent. */
+      d3.partition().size([2 * Math.PI, h.height + 1])(h);
 
       /* Each node remembers its layout as both `current` and `target`. */
       h.each(function (d) {
