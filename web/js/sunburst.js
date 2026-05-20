@@ -21,8 +21,11 @@
   var U = global.Util;
   var d3 = global.d3;
 
-  /* Inline label area threshold (fraction of the ring band's area). */
-  var LABEL_AREA = 0.03;
+  /* Label sizing, in SVG user units. The CSS .sb-label font-size must match
+   * LABEL_FONT so the arc-fit math below stays accurate. */
+  var LABEL_FONT = 15;
+  var LABEL_CHAR_W = LABEL_FONT * 0.6; // approx monospace glyph advance
+  var LABEL_MIN_CHARS = 3; // hide a label that cannot fit at least this many
   /* Zoom transition duration. */
   var TWEEN_MS = 750;
 
@@ -295,12 +298,28 @@
       return d.y1 <= 3 && d.y0 >= 1 && d.x1 > d.x0;
     }
 
-    function labelVisible(d) {
-      return (
-        d.y1 <= 3 &&
-        d.y0 >= 1 &&
-        (d.y1 - d.y0) * (d.x1 - d.x0) > LABEL_AREA
-      );
+    /* Monospace chars that fit tangentially along an arc's mid-radius band. */
+    function arcChars(c) {
+      var midR = ((c.y0 + c.y1) / 2) * radius;
+      return Math.floor(((c.x1 - c.x0) * midR) / LABEL_CHAR_W);
+    }
+
+    /* A label shows only if its arc is visible AND wide enough for a few
+     * chars — this is what stops tiny slices from stacking unreadable
+     * fragments (e.g. on the collapsed 0° seam). */
+    function labelVisible(c) {
+      return arcVisible(c) && arcChars(c) >= LABEL_MIN_CHARS;
+    }
+
+    /* Fit a node's name to its arc; ellipsize only when it genuinely cannot
+     * fit, and return "" when the arc is too small for any label at all. */
+    function labelText(node, c) {
+      var name =
+        node.data && node.data.name != null ? String(node.data.name) : "";
+      var max = arcChars(c);
+      if (max < LABEL_MIN_CHARS) return "";
+      if (name.length <= max) return name;
+      return name.slice(0, Math.max(1, max - 1)) + "…";
     }
 
     function labelTransform(d) {
@@ -358,6 +377,9 @@
         .attr("fill-opacity", function (d) {
           return arcVisible(d.current) ? arcOpacity(d) : 0;
         })
+        .attr("stroke-opacity", function (d) {
+          return arcVisible(d.current) ? 1 : 0;
+        })
         .attr("pointer-events", function (d) {
           return arcVisible(d.current) ? "auto" : "none";
         })
@@ -382,9 +404,7 @@
           return labelTransform(d.current);
         })
         .text(function (d) {
-          var span = d.current.x1 - d.current.x0;
-          var maxChars = Math.max(3, Math.round((span / (2 * Math.PI)) * 60));
-          return ellipsize(d.data.name, maxChars);
+          return labelText(d, d.current);
         });
 
       updateCenter();
@@ -811,7 +831,7 @@
     }
 
     /* ---- zoom tween ----------------------------------------------------- */
-    function zoomTo(p) {
+    function zoomTo(p, silent) {
       if (!p) return;
       focusNode = p;
       project(p);
@@ -835,12 +855,20 @@
         .attr("fill-opacity", function (d) {
           return arcVisible(d.target) ? arcOpacity(d) : 0;
         })
+        .attr("stroke-opacity", function (d) {
+          return arcVisible(d.target) ? 1 : 0;
+        })
         .attr("pointer-events", function (d) {
           return arcVisible(d.target) ? "auto" : "none";
         });
 
+      /* Re-fit label text to the destination geometry up front, then tween
+       * position and fade opacity to the target visibility. */
       gLabels
         .selectAll("text.sb-label")
+        .text(function (d) {
+          return labelText(d, d.target);
+        })
         .transition(t)
         .attr("fill-opacity", function (d) {
           return labelVisible(d.target) ? 1 : 0;
@@ -855,8 +883,8 @@
       renderCrumbs();
       renderDetails();
 
-      /* notify the router */
-      if (opts.onFocusChange) {
+      /* notify the router (skipped when the router itself drove this focus) */
+      if (!silent && opts.onFocusChange) {
         opts.onFocusChange(p.depth === 0 ? "" : p.data.path || "");
       }
     }
@@ -894,60 +922,15 @@
 
       var hit = findHierByPath(path);
       if (hit) {
-        if (hit !== focusNode) {
-          /* jump without notifying back (router already owns the hash) */
-          focusNode = hit;
-          project(hit);
-          var t = svg.transition().duration(TWEEN_MS);
-          gArcs
-            .selectAll("path.sb-arc")
-            .transition(t)
-            .tween("data", function (d) {
-              var i = d3.interpolate(d.current, d.target);
-              return function (tt) {
-                d.current = i(tt);
-              };
-            })
-            .attrTween("d", function (d) {
-              return function () {
-                return arc(d.current);
-              };
-            })
-            .attr("fill-opacity", function (d) {
-              return arcVisible(d.target) ? arcOpacity(d) : 0;
-            })
-            .attr("pointer-events", function (d) {
-              return arcVisible(d.target) ? "auto" : "none";
-            });
-          gLabels
-            .selectAll("text.sb-label")
-            .transition(t)
-            .attr("fill-opacity", function (d) {
-              return labelVisible(d.target) ? 1 : 0;
-            })
-            .attrTween("transform", function (d) {
-              return function () {
-                return labelTransform(d.current);
-              };
-            });
-          updateCenter();
-          renderCrumbs();
-          renderDetails();
-        }
+        /* silent: the router already owns the URL hash. */
+        if (hit !== focusNode) zoomTo(hit, true);
         return;
       }
 
-      /* Path not present — try to lazily resolve along the chain. Focus the
-       * deepest loaded prefix so the user at least lands nearby. */
+      /* Path not loaded — focus the deepest loaded prefix so a deep link at
+       * least lands nearby. */
       var deepest = deepestLoadedAncestor(path);
-      if (deepest && deepest !== focusNode) {
-        focusNode = deepest;
-        project(deepest);
-        root.each(function (d) {
-          d.current = d.target;
-        });
-        render();
-      }
+      if (deepest && deepest !== focusNode) zoomTo(deepest, true);
     }
 
     /* Find the deepest loaded hierarchy node whose path is a prefix of `path`. */

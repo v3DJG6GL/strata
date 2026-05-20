@@ -861,7 +861,7 @@ button {
 }
 .sb-svg {
   width: 100%;
-  max-width: 560px;
+  max-width: 760px;
   height: auto;
   display: block;
 }
@@ -870,7 +870,8 @@ button {
 .sb-arc {
   stroke: var(--bg);
   stroke-width: 1;
-  transition: fill-opacity 0.18s, filter 0.18s;
+  /* fill/stroke opacity are animated by d3 transitions — don't double up */
+  transition: filter 0.18s;
 }
 .sb-arc-hi {
   filter: brightness(1.22) saturate(1.15);
@@ -883,15 +884,17 @@ button {
   stroke-width: 1.4;
 }
 
-/* arc labels */
+/* arc labels — light text with a dark halo so they read on any arc colour.
+ * font-size is in SVG user units and must match LABEL_FONT in sunburst.js. */
 .sb-label {
   font-family: var(--mono);
-  font-size: 9.5px;
-  fill: #0a0d12;
+  font-size: 15px;
+  fill: #f4f6fb;
   font-weight: 600;
   paint-order: stroke;
-  stroke: rgba(255, 255, 255, 0.32);
-  stroke-width: 2px;
+  stroke: rgba(3, 6, 12, 0.78);
+  stroke-width: 3.4px;
+  stroke-linejoin: round;
 }
 
 /* center disc */
