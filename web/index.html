@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <title>DUC Advanced — Disk Usage Explorer</title>
+    <link rel="stylesheet" href="css/app.css" />
+  </head>
+  <body>
+    <!-- atmospheric backdrop: dotted grid + soft accent glow -->
+    <div class="bg-grid" aria-hidden="true"></div>
+    <div class="bg-glow" aria-hidden="true"></div>
+
+    <!-- SPA mount point; app.js renders every route in here -->
+    <div id="app">
+      <div class="loading boot">
+        <div class="spin"></div><span>Starting DUC Advanced…</span>
+      </div>
+    </div>
+
+    <!-- D3 v7.9.0 full bundle (vendored, no CDN at runtime) -->
+    <script src="vendor/d3.v7.min.js"></script>
+    <!-- application scripts: order matters (plain globals, no modules) -->
+    <script src="js/util.js"></script>
+    <script src="js/stats.js"></script>
+    <script src="js/sunburst.js"></script>
+    <script src="js/app.js"></script>
+  </body>
+</html>

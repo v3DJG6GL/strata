@@ -1,0 +1,29 @@
+services:
+  duc:
+    # Pre-built image published by .github/workflows/build.yml.
+    # To build locally instead, comment out `image:` and uncomment `build:`.
+    image: ghcr.io/v3djg6gl/duc-advanced:latest
+    # build: .
+    container_name: duc
+    environment:
+      # Space-separated directories to scan. Each path must live inside one of
+      # the volumes mounted below.
+      DUC_SCAN_PATHS: "/mnt/hdd-pool /mnt/ssd-pool"
+      # Seconds between scans (86400 = once per day).
+      DUC_SCAN_INTERVAL: "86400"
+      # Number of snapshots to retain; older ones are pruned automatically.
+      DUC_KEEP_SNAPSHOTS: "30"
+    ports:
+      - "8000:8000"
+    volumes:
+      # Read-only access to the data being measured.
+      - /mnt:/mnt:ro
+      # Persistent storage for snapshot databases and generated artifacts.
+      - /mnt/ssd-pool/appdata/duc:/var/lib/duc
+    restart: unless-stopped
+    networks:
+      - nginx_proxy
+
+networks:
+  nginx_proxy:
+    external: true
