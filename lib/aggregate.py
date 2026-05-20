@@ -22,10 +22,14 @@ import xml.etree.ElementTree as ET
 
 import duc_export as duc
 
-# Overview tree: built once per scan, covers the whole filesystem shallowly.
-OVERVIEW = {"depth_cap": 9, "max_children": 60, "min_size_ratio": 0.0005}
+# A child is kept (vs. folded into "(other)") by an absolute-ish size
+# threshold -- a fraction of its scan root -- NOT by rank. A rank cap would
+# make a directory near the boundary flip in and out of "(other)" between
+# scans, producing spurious added/removed rows when two snapshots are diffed.
+# max_children is only a safety valve against pathologically wide directories.
+OVERVIEW = {"depth_cap": 9, "max_children": 250, "min_size_ratio": 0.0005}
 # Lazy subtree: fetched on drill-down, a few levels deep but wide.
-LAZY = {"depth_cap": 3, "max_children": 200, "min_size_ratio": 0.0}
+LAZY = {"depth_cap": 3, "max_children": 600, "min_size_ratio": 0.0}
 
 
 def _finalize(frame, opts, root_total):

@@ -65,6 +65,8 @@
       '<button type="button" data-k="size_apparent">Apparent</button>' +
       "</div>";
     chartWrap.appendChild(toolbar);
+    /* compare mode supplies its own metric control — hide the built-in one */
+    if (opts.compareMode) toolbar.style.display = "none";
 
     var svgHost = el("div", "sb-svg-host");
     chartWrap.appendChild(svgHost);
@@ -373,7 +375,7 @@
       var pathsAll = pathsEnter.merge(paths);
 
       pathsAll
-        .attr("fill", colorFor)
+        .attr("fill", opts.color || colorFor)
         .attr("fill-opacity", function (d) {
           return arcVisible(d.current) ? arcOpacity(d) : 0;
         })
@@ -613,28 +615,32 @@
         );
       }
 
-      rows.push(
-        tipRow("Size", U.humanBytes(sz) + "  ·  " + U.exactBytes(sz) + " B")
-      );
-      rows.push(tipRow("% of parent", U.pctStr(sz, parentSz)));
-      rows.push(tipRow("% of scan", U.pctStr(sz, totalSize)));
-      rows.push(
-        tipRow(
-          "Items",
-          data.count != null ? U.commaCount(data.count) : "—"
-        )
-      );
-      var childDirs = (data.children || []).filter(function (c) {
-        return !c._files;
-      }).length;
-      rows.push(
-        tipRow(
-          "Child dirs",
-          data.other
-            ? "—"
-            : childDirs + (data.truncated ? "+ (truncated)" : "")
-        )
-      );
+      if (opts.tooltipRows) {
+        /* compare mode replaces the metric rows with before/after/delta */
+        opts.tooltipRows(data).forEach(function (r) {
+          rows.push(tipRow(r.k, r.v));
+        });
+      } else {
+        rows.push(
+          tipRow("Size", U.humanBytes(sz) + "  ·  " + U.exactBytes(sz) + " B")
+        );
+        rows.push(tipRow("% of parent", U.pctStr(sz, parentSz)));
+        rows.push(tipRow("% of scan", U.pctStr(sz, totalSize)));
+        rows.push(
+          tipRow("Items", data.count != null ? U.commaCount(data.count) : "—")
+        );
+        var childDirs = (data.children || []).filter(function (c) {
+          return !c._files;
+        }).length;
+        rows.push(
+          tipRow(
+            "Child dirs",
+            data.other
+              ? "—"
+              : childDirs + (data.truncated ? "+ (truncated)" : "")
+          )
+        );
+      }
 
       tip.innerHTML = rows.join("");
       tip.style.display = "block";

@@ -5,8 +5,10 @@
  *   #/                                       → Dashboard
  *   #/scan/<ts>                              → Scan detail
  *   #/scan/<ts>/<encodeURIComponent(path)>   → Scan detail focused on a path
+ *   #/compare                                → Compare (newest vs previous)
+ *   #/compare/<base>/<cur>                   → Compare two snapshots
  *
- * Depends on: d3 (only inside Sunburst), Util, Stats, Sunburst.
+ * Depends on: d3 (only inside Sunburst), Util, Stats, Sunburst, ComparePage.
  * ======================================================================== */
 (function (global) {
   "use strict";
@@ -104,7 +106,10 @@
       '<section class="snap-section">' +
       '<div class="section-head">' +
       '<h2 class="section-title">Snapshots</h2>' +
+      '<div class="section-head-right">' +
       '<span class="section-meta mono" id="snap-count"></span>' +
+      '<a class="btn btn-compare" href="#/compare">⇄ Compare scans</a>' +
+      "</div>" +
       "</div>" +
       '<div id="snap-list">' +
       spinner("Loading snapshots…") +
@@ -420,6 +425,48 @@
   }
 
   /* ====================================================================== *
+   * COMPARE                                                                *
+   * ====================================================================== */
+  function renderCompare(base, cur) {
+    clearPoll();
+    detailState = null;
+
+    appEl.innerHTML =
+      header() +
+      '<main class="page page-compare">' +
+      '<nav class="crumbtrail">' +
+      '<a href="#/" class="crumbtrail-link">Dashboard</a>' +
+      '<span class="crumbtrail-sep">/</span>' +
+      '<span class="crumbtrail-here">Compare scans</span>' +
+      "</nav>" +
+      '<h1 class="scan-title">Compare scans</h1>' +
+      '<div id="compare-slot">' +
+      spinner("Loading comparison…") +
+      "</div>" +
+      "</main>";
+
+    var slot = document.getElementById("compare-slot");
+    if (!global.ComparePage) {
+      slot.innerHTML = "";
+      slot.appendChild(errorBox("Comparison module failed to load."));
+      return;
+    }
+    global.ComparePage.render(slot, {
+      base: base || "",
+      cur: cur || "",
+      /* selector changes flow back through the hash so a comparison is
+       * shareable and survives back/forward. */
+      onNavigate: function (b, c) {
+        var hash = "#/compare";
+        if (b && c)
+          hash += "/" + encodeURIComponent(b) + "/" + encodeURIComponent(c);
+        if (location.hash === hash) route();
+        else location.hash = hash;
+      }
+    });
+  }
+
+  /* ====================================================================== *
    * ROUTER                                                                 *
    * ====================================================================== */
   /* When app.js itself writes the hash (focus sync), we record it here so
@@ -439,6 +486,13 @@
         route: "scan",
         ts: decodeURIComponent(parts[1]),
         focusPath: parts[2] ? decodeURIComponent(parts[2]) : ""
+      };
+    }
+    if (parts[0] === "compare") {
+      return {
+        route: "compare",
+        base: parts[1] ? decodeURIComponent(parts[1]) : "",
+        cur: parts[2] ? decodeURIComponent(parts[2]) : ""
       };
     }
     return { route: "dashboard" };
@@ -471,6 +525,8 @@
       }
       detailState = null;
       renderScanDetail(r.ts, r.focusPath);
+    } else if (r.route === "compare") {
+      renderCompare(r.base, r.cur);
     } else {
       detailState = null;
       renderDashboard();

@@ -25,6 +25,7 @@ from urllib.parse import parse_qs
 import duc_export as duc
 import aggregate
 import scan_stats
+import diff
 
 DB_DIR = os.environ.get("DUC_DB_DIR", "/var/lib/duc")
 CURRENT_JSON = os.path.join(DB_DIR, "current-scan.json")
@@ -230,22 +231,36 @@ def op_stats(ts):
     return get_stats(ts)
 
 
+def overview_tree(ts):
+    """The pre-aggregated overview tree node for a snapshot (built + cached)."""
+    cached = os.path.join(DB_DIR, "duc-%s.tree.json" % ts)
+    try:
+        with open(cached) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        pass
+    node = aggregate.build_overview(db_path(ts))
+    try:  # best-effort cache
+        with open(cached, "w") as f:
+            json.dump(node, f, separators=(",", ":"))
+    except OSError:
+        pass
+    return node
+
+
 def op_tree(ts, path):
     if path:
-        node = aggregate.build_lazy(db_path(ts), path)
-        return {"ts": ts, "lazy": True, "node": node}
-    cached = os.path.join(DB_DIR, "duc-%s.tree.json" % ts)
-    if not os.path.exists(cached):
-        node = aggregate.build_overview(db_path(ts))
-        try:  # best-effort cache
-            with open(cached, "w") as f:
-                json.dump(node, f, separators=(",", ":"))
-        except OSError:
-            pass
-        return {"ts": ts, "lazy": False, "node": node}
-    with open(cached) as f:
-        node = json.load(f)
-    return {"ts": ts, "lazy": False, "node": node}
+        return {"ts": ts, "lazy": True, "node": aggregate.build_lazy(db_path(ts), path)}
+    return {"ts": ts, "lazy": False, "node": overview_tree(ts)}
+
+
+def op_compare(base_ts, cur_ts):
+    result = diff.compare(overview_tree(base_ts), overview_tree(cur_ts))
+    result["base"] = base_ts
+    result["cur"] = cur_ts
+    result["base_label"] = duc.ts_label(base_ts)
+    result["cur_label"] = duc.ts_label(cur_ts)
+    return result
 
 
 # --------------------------------------------------------------------------
@@ -265,6 +280,8 @@ def main():
     op = (qs.get("op", [""])[0]) or ""
     ts = (qs.get("ts", [""])[0]) or ""
     path = (qs.get("path", [""])[0]) or ""
+    base = (qs.get("base", [""])[0]) or ""
+    cur = (qs.get("cur", [""])[0]) or ""
 
     try:
         if op == "snapshots":
@@ -277,6 +294,9 @@ def main():
             # an immutable snapshot tree may be cached by the browser
             cache = "max-age=86400" if (ts and not path) else "no-cache"
             respond(op_tree(ts, path), cache=cache)
+        elif op == "compare":
+            # base/cur are immutable snapshots -> the diff is cacheable
+            respond(op_compare(base, cur), cache="max-age=86400")
         else:
             respond({"error": "unknown op: %r" % op})
     except Exception as exc:  # noqa: BLE001 - surface every failure as JSON
