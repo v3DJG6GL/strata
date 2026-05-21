@@ -1,5 +1,5 @@
 /* ==========================================================================
- * sunburst.js — zoomable D3 v7 sunburst for DUC Advanced
+ * sunburst.js — zoomable D3 v7 sunburst for Strata
  *
  * Hand-rolled per the canonical D3 "Zoomable Sunburst" technique, extended
  * with: lazy subtree loading, a tooltip on EVERY arc, a clickable breadcrumb,
@@ -330,7 +330,7 @@
 
     /* ---- hierarchy / partition ----------------------------------------- */
     /* Key invariant: a directory's arc angle ∝ its own size_actual, and its
-     * children fit within its angular span (duc child sizes sum to ≤ parent).
+     * children fit within its angular span (child sizes sum to ≤ parent).
      * We give every node a synthetic leaf-value equal to its own size minus
      * the sum of its children's sizes — that remainder represents the
      * directory's own files. We then add an explicit "·files·" leaf child so

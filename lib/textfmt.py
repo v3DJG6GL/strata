@@ -1,9 +1,4 @@
-"""Shared text/format helpers.
-
-(Historically this module wrapped the `duc` binary; since DUC Advanced gained
-its own inode-aware indexer it only holds these small formatters. The module
-name is kept to avoid churn — imported as `duc_export` by scan_stats / api.cgi.)
-"""
+"""Shared text/format helpers used by scan_stats and api.cgi."""
 
 
 def human_duration(seconds):

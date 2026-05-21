@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""JSON API for DUC Advanced (CGI, served by lighttpd).
+"""JSON API for Strata (CGI, served by lighttpd).
 
 Endpoints (GET cgi-bin/api.cgi?op=...):
   op=snapshots                 -> list of scans + summary stats
@@ -19,16 +19,16 @@ import re
 import sys
 import traceback
 
-sys.path.insert(0, os.environ.get("DUC_LIB_DIR", "/app/lib"))
+sys.path.insert(0, os.environ.get("STRATA_LIB_DIR", "/app/lib"))
 
 from urllib.parse import parse_qs
 
-import duc_export as duc
+import textfmt as fmt
 import aggregate
 import scan_stats
 import diff
 
-DB_DIR = os.environ.get("DUC_DB_DIR", "/var/lib/duc")
+DB_DIR = os.environ.get("STRATA_DB_DIR", "/var/lib/strata")
 CURRENT_JSON = os.path.join(DB_DIR, "current-scan.json")
 SAMPLES = os.path.join(DB_DIR, "current-scan.samples")
 PROGRESS = os.path.join(DB_DIR, "progress.log")
@@ -45,7 +45,7 @@ def artifact(ts, suffix):
     """Path to a snapshot artifact, validating the snapshot id first."""
     if not TS_RE.match(ts or ""):
         raise ValueError("invalid snapshot id")
-    return os.path.join(DB_DIR, "duc-%s%s" % (ts, suffix))
+    return os.path.join(DB_DIR, "strata-%s%s" % (ts, suffix))
 
 
 def list_snapshot_ts():
@@ -53,8 +53,8 @@ def list_snapshot_ts():
     out = []
     try:
         for name in os.listdir(DB_DIR):
-            if name.startswith("duc-") and name.endswith(".tree.json"):
-                ts = name[4:-len(".tree.json")]
+            if name.startswith("strata-") and name.endswith(".tree.json"):
+                ts = name[len("strata-"):-len(".tree.json")]
                 if TS_RE.match(ts):
                     out.append(ts)
     except OSError:
@@ -100,7 +100,7 @@ def get_stats(ts):
 
 
 def humansize_count(text):
-    """Parse a duc progress count like "1.2M" into an integer (1000-base)."""
+    """Parse a progress count like "1.2M" into an integer (1000-base)."""
     m = re.match(r"\s*([0-9]+(?:\.[0-9]+)?)\s*([KMGT]?)", text or "", re.I)
     if not m:
         return None
@@ -162,8 +162,8 @@ def op_snapshots():
     for ts in list_snapshot_ts():
         entry = {
             "ts": ts,
-            "label": duc.ts_label(ts),
-            "has_tree": os.path.exists(os.path.join(DB_DIR, "duc-%s.tree.json" % ts)),
+            "label": fmt.ts_label(ts),
+            "has_tree": os.path.exists(os.path.join(DB_DIR, "strata-%s.tree.json" % ts)),
             "db_bytes": None,
             "duration_sec": None,
             "total": None,
@@ -280,8 +280,8 @@ def op_compare(base_ts, cur_ts):
     result = diff.compare(overview_tree(base_ts), overview_tree(cur_ts))
     result["base"] = base_ts
     result["cur"] = cur_ts
-    result["base_label"] = duc.ts_label(base_ts)
-    result["cur_label"] = duc.ts_label(cur_ts)
+    result["base_label"] = fmt.ts_label(base_ts)
+    result["cur_label"] = fmt.ts_label(cur_ts)
     return result
 
 

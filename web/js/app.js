@@ -1,5 +1,5 @@
 /* ==========================================================================
- * app.js — hash router + page orchestration for DUC Advanced
+ * app.js — hash router + page orchestration for Strata
  *
  * Routes:
  *   #/                                       → Dashboard
@@ -79,8 +79,8 @@
       '<header class="app-header">' +
       '<a class="brand" href="#/">' +
       '<span class="brand-mark" aria-hidden="true"></span>' +
-      '<span class="brand-name">DUC<span class="brand-name-accent">' +
-      " Advanced</span></span>" +
+      '<span class="brand-name">Stra<span class="brand-name-accent">' +
+      "ta</span></span>" +
       '<span class="brand-sub">disk usage explorer</span>' +
       "</a>" +
       "</header>"

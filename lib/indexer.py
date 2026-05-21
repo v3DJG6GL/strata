@@ -1,11 +1,11 @@
-"""Inode-aware filesystem indexer for DUC Advanced.
+"""Inode-aware filesystem indexer for Strata.
 
-Replaces `duc index`. Walks the configured directories and, unlike duc, can
-attribute hard-linked files deliberately:
+Walks the configured directories and attributes hard-linked files
+deliberately:
 
   * every inode's bytes are counted exactly once (the industry-standard dedup);
   * the directory an inode counts under is the highest-priority one among its
-    links (DUC_HARDLINK_PRIORITY), falling back to the first link encountered;
+    links (STRATA_HARDLINK_PRIORITY), falling back to the first link encountered;
   * each directory also reports `exclusive` bytes -- bytes whose every hard
     link lives inside that subtree, i.e. what is actually reclaimed if the
     directory is deleted -- and `copy` bytes, the redundant links that were
@@ -16,12 +16,12 @@ are equal and share one set of inode timestamps), so attribution is by
 directory rule, never by "which link is older".
 
 Output (written to <out>/):
-  duc-<ts>.full.json.gz   detail tree (directories >= DETAIL_FLOOR), for lazy
-  duc-<ts>.tree.json      aggregated overview tree (via aggregate.py)
-  duc-<ts>.totals.json    per-root and combined totals, for scan_stats.py
+  strata-<ts>.full.json.gz   detail tree (directories >= DETAIL_FLOOR), for lazy
+  strata-<ts>.tree.json      aggregated overview tree (via aggregate.py)
+  strata-<ts>.totals.json    per-root and combined totals, for scan_stats.py
 
 CLI:  indexer.py --ts <ts> --out <dir> --progress <file>
-      (scan paths come from DUC_SCAN_PATHS, rules from DUC_HARDLINK_PRIORITY)
+      (scan paths come from STRATA_SCAN_PATHS, rules from STRATA_HARDLINK_PRIORITY)
 """
 
 import gzip
@@ -161,9 +161,9 @@ def _lca(dirs):
 def link_tier(path, priority, copies):
     """Sort key (tier, sub-index) for a hard link's directory:
 
-      tier 0  link inside a DUC_HARDLINK_PRIORITY directory  (the "original")
+      tier 0  link inside a STRATA_HARDLINK_PRIORITY directory  (the "original")
       tier 1  link inside a directory listed in neither
-      tier 2  link inside a DUC_HARDLINK_COPIES directory     (a "copy")
+      tier 2  link inside a STRATA_HARDLINK_COPIES directory     (a "copy")
 
     The longest matching prefix decides the tier, so a copy directory nested
     inside a priority directory (or vice versa) is classed by the more
@@ -272,12 +272,12 @@ def _dir_list(env_name):
 
 def hardlink_priority():
     """Directories whose hard links are preferred as the canonical original."""
-    return _dir_list("DUC_HARDLINK_PRIORITY")
+    return _dir_list("STRATA_HARDLINK_PRIORITY")
 
 
 def hardlink_copies():
     """Directories whose hard links are ranked last (treated as copies)."""
-    return _dir_list("DUC_HARDLINK_COPIES")
+    return _dir_list("STRATA_HARDLINK_COPIES")
 
 
 def run_index(scan_paths, priority, copies, progress_path=None):
@@ -368,9 +368,9 @@ def main(argv):
         sys.stderr.write("usage: indexer.py --ts <ts> --out <dir> [--progress <file>]\n")
         return 2
 
-    scan_paths = os.environ.get("DUC_SCAN_PATHS", "").split()
+    scan_paths = os.environ.get("STRATA_SCAN_PATHS", "").split()
     if not scan_paths:
-        sys.stderr.write("indexer: DUC_SCAN_PATHS is empty\n")
+        sys.stderr.write("indexer: STRATA_SCAN_PATHS is empty\n")
         return 1
 
     sys.setrecursionlimit(20000)
@@ -378,11 +378,11 @@ def main(argv):
         scan_paths, hardlink_priority(), hardlink_copies(), progress
     )
 
-    with gzip.open(os.path.join(out, "duc-%s.full.json.gz" % ts), "wt") as f:
+    with gzip.open(os.path.join(out, "strata-%s.full.json.gz" % ts), "wt") as f:
         json.dump(detail, f, separators=(",", ":"))
-    with open(os.path.join(out, "duc-%s.tree.json" % ts), "w") as f:
+    with open(os.path.join(out, "strata-%s.tree.json" % ts), "w") as f:
         json.dump(aggregate.build_overview(detail), f, separators=(",", ":"))
-    with open(os.path.join(out, "duc-%s.totals.json" % ts), "w") as f:
+    with open(os.path.join(out, "strata-%s.totals.json" % ts), "w") as f:
         json.dump(totals, f, separators=(",", ":"))
     return 0
 

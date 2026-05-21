@@ -1,6 +1,6 @@
-# DUC Advanced
+# Strata
 
-An interactive disk-usage visualizer built on top of [`duc`](https://duc.zevv.nl).
+An interactive, self-hosted disk-usage visualizer.
 
 It periodically indexes one or more directory trees, keeps a rolling history of
 snapshots, and serves a single-page web UI with:
@@ -34,51 +34,51 @@ the image:
 
 | Variable                | Default                       | Meaning |
 |-------------------------|-------------------------------|---------|
-| `DUC_SCAN_PATHS`        | `/mnt/hdd-pool /mnt/ssd-pool`  | Space-separated directories to scan. |
-| `DUC_SCAN_INTERVAL`     | `86400`                        | Seconds between scans. |
-| `DUC_KEEP_SNAPSHOTS`    | `30`                           | Number of snapshots to retain. |
-| `DUC_SCAN_ON_START`     | *(none)*                       | Testing/dev. If truthy (`1`/`true`/`yes`/`on`), run a scan on every container start, overriding the recent-snapshot deferral. |
-| `DUC_HARDLINK_PRIORITY` | *(none)*                       | Directories whose hard links are preferred as the counted "original" — one directory per line. |
-| `DUC_HARDLINK_COPIES`   | *(none)*                       | Directories whose hard links are ranked last and treated as copies — one directory per line. |
+| `STRATA_SCAN_PATHS`        | `/mnt/hdd-pool /mnt/ssd-pool`  | Space-separated directories to scan. |
+| `STRATA_SCAN_INTERVAL`     | `86400`                        | Seconds between scans. |
+| `STRATA_KEEP_SNAPSHOTS`    | `30`                           | Number of snapshots to retain. |
+| `STRATA_SCAN_ON_START`     | *(none)*                       | Testing/dev. If truthy (`1`/`true`/`yes`/`on`), run a scan on every container start, overriding the recent-snapshot deferral. |
+| `STRATA_HARDLINK_PRIORITY` | *(none)*                       | Directories whose hard links are preferred as the counted "original" — one directory per line. |
+| `STRATA_HARDLINK_COPIES`   | *(none)*                       | Directories whose hard links are ranked last and treated as copies — one directory per line. |
 
-Each path in `DUC_SCAN_PATHS` must be inside a volume mounted into the
+Each path in `STRATA_SCAN_PATHS` must be inside a volume mounted into the
 container (the default compose file mounts `/mnt` read-only).
 
 **Hardlink attribution.** A file with several hard links is counted once. The
 directory that "owns" it is chosen in this order: a link inside a
-`DUC_HARDLINK_PRIORITY` directory, then a link in an unlisted directory, then
-a link inside a `DUC_HARDLINK_COPIES` directory. Every other link is reported
+`STRATA_HARDLINK_PRIORITY` directory, then a link in an unlisted directory, then
+a link inside a `STRATA_HARDLINK_COPIES` directory. Every other link is reported
 as a copy.
 
 ### Volumes
 
 - `/mnt:/mnt:ro` — read-only access to the data being measured.
-- `<host path>:/var/lib/duc` — persistent storage for snapshot databases
-  (`duc-<ts>.db`) and the generated `*.stats.json` / `*.tree.json` sidecars.
+- `<host path>:/var/lib/strata` — persistent storage for the generated
+  snapshot artifacts (`strata-<ts>.tree.json` and its sidecars).
 
 ## Build locally
 
 ```sh
 docker compose build      # uncomment `build: .` in docker-compose.yaml first
 # or
-docker build -t duc-advanced .
+docker build -t strata .
 ```
 
 Pushes to `main` and version tags build and publish
-`ghcr.io/<owner>/duc-advanced` via GitHub Actions (`.github/workflows/build.yml`).
+`ghcr.io/<owner>/strata` via GitHub Actions (`.github/workflows/build.yml`).
 
 ## How it works
 
 ```
-docker/scan-loop.sh   periodic `duc index` + live /proc sampling
+docker/scan-loop.sh   periodic indexer runs + live /proc sampling
 lib/sampler.py        samples a running scan into a JSON-lines log
-lib/scan_stats.py     freezes per-scan stats into duc-<ts>.stats.json
-lib/duc_export.py     thin wrapper around the duc binary
-lib/aggregate.py      streams `duc xml` into a bounded, aggregated tree
+lib/scan_stats.py     freezes per-scan stats into strata-<ts>.stats.json
+lib/textfmt.py        shared text/format helpers
+lib/aggregate.py      folds the detail tree into a bounded overview
 cgi/api.cgi           JSON API (snapshots, status, stats, tree)
 web/                  the single-page app (vanilla JS + vendored D3 v7)
 ```
 
-`duc` itself keeps no scan history and its built-in CGI re-renders the whole
-page on every click; DUC Advanced replaces that with snapshot databases plus a
-client-side interactive UI fed by a small JSON API.
+Each scan is frozen as a set of JSON artifacts; the web UI is fully
+client-side and reads them through a small JSON API, so drilling into the
+sunburst and switching snapshots never reloads the page.

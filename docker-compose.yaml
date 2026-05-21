@@ -1,45 +1,45 @@
 services:
-  duc:
+  strata:
     # Pre-built image published by .github/workflows/build.yml.
     # To build locally instead, comment out `image:` and uncomment `build:`.
-    image: ghcr.io/v3djg6gl/duc-advanced:latest
+    image: ghcr.io/v3djg6gl/strata:latest
     # build: .
-    container_name: duc
+    container_name: strata
     environment:
       # Space-separated directories to scan. Each path must live inside one of
       # the volumes mounted below.
-      DUC_SCAN_PATHS: "/mnt/hdd-pool /mnt/ssd-pool"
+      STRATA_SCAN_PATHS: "/mnt/hdd-pool /mnt/ssd-pool"
       # Seconds between scans (86400 = once per day).
-      DUC_SCAN_INTERVAL: "86400"
+      STRATA_SCAN_INTERVAL: "86400"
       # Number of snapshots to retain; older ones are pruned automatically.
-      DUC_KEEP_SNAPSHOTS: "30"
+      STRATA_KEEP_SNAPSHOTS: "30"
       # Testing/dev only. If truthy (1/true/yes/on), run a scan immediately on
       # every container start/restart, overriding the recent-snapshot deferral
       # (a normal start defers the first scan when a recent snapshot exists).
       # Leave empty for production.
-      DUC_SCAN_ON_START: ""
+      STRATA_SCAN_ON_START: ""
       # Optional hardlink attribution. A file with several hard links is
       # counted once -- under one chosen directory; links elsewhere are
       # reported as free copies. The "original" is chosen in priority order:
-      #   1. a link inside a DUC_HARDLINK_PRIORITY directory
+      #   1. a link inside a STRATA_HARDLINK_PRIORITY directory
       #   2. a link inside an unlisted directory
-      #   3. a link inside a DUC_HARDLINK_COPIES directory
+      #   3. a link inside a STRATA_HARDLINK_COPIES directory
       # One directory per line; leave both empty for first-link-seen.
       # Example:
-      #   DUC_HARDLINK_PRIORITY: |
+      #   STRATA_HARDLINK_PRIORITY: |
       #     /mnt/ssd-pool/media
       #     /mnt/hdd-pool/archive
-      #   DUC_HARDLINK_COPIES: |
+      #   STRATA_HARDLINK_COPIES: |
       #     /mnt/ssd-pool/downloads
-      DUC_HARDLINK_PRIORITY: ""
-      DUC_HARDLINK_COPIES: ""
+      STRATA_HARDLINK_PRIORITY: ""
+      STRATA_HARDLINK_COPIES: ""
     ports:
       - "8000:8000"
     volumes:
       # Read-only access to the data being measured.
       - /mnt:/mnt:ro
       # Persistent storage for snapshot databases and generated artifacts.
-      - /mnt/ssd-pool/appdata/duc:/var/lib/duc
+      - /mnt/ssd-pool/appdata/strata:/var/lib/strata
     restart: unless-stopped
     networks:
       - nginx_proxy

@@ -1,4 +1,4 @@
-"""Freeze per-scan statistics into a `duc-<ts>.stats.json` sidecar.
+"""Freeze per-scan statistics into a `strata-<ts>.stats.json` sidecar.
 
 Reads the totals written by indexer.py, plus the scan's wall-clock timing and
 the final sampler reading, and writes the stats the dashboard and scan page
@@ -11,16 +11,16 @@ import json
 import os
 import sys
 
-import duc_export as duc  # human_duration, ts_label
+import textfmt as fmt  # human_duration, ts_label
 
 
 def _ts_from(path):
-    """Extract the snapshot id from a `.../duc-<ts>.totals.json` path."""
+    """Extract the snapshot id from a `.../strata-<ts>.totals.json` path."""
     base = os.path.basename(path)
-    if base.startswith("duc-"):
+    if base.startswith("strata-"):
         for suffix in (".totals.json", ".stats.json"):
             if base.endswith(suffix):
-                return base[4:-len(suffix)]
+                return base[len("strata-"):-len(suffix)]
     return base
 
 
@@ -54,7 +54,7 @@ def build_stats(totals_path, start=None, end=None, samples_path=None):
 
     db_dir = os.path.dirname(os.path.abspath(totals_path))
     try:
-        db_bytes = os.path.getsize(os.path.join(db_dir, "duc-%s.full.json.gz" % ts))
+        db_bytes = os.path.getsize(os.path.join(db_dir, "strata-%s.full.json.gz" % ts))
     except OSError:
         db_bytes = None
 
@@ -79,12 +79,12 @@ def build_stats(totals_path, start=None, end=None, samples_path=None):
 
     return {
         "ts": ts,
-        "label": duc.ts_label(ts),
+        "label": fmt.ts_label(ts),
         "indexer": "built-in inode-aware indexer",
         "start": start,
         "end": end,
         "duration_sec": duration,
-        "duration_human": duc.human_duration(duration),
+        "duration_human": fmt.human_duration(duration),
         "roots": roots,
         "total": total,
         "db_bytes": db_bytes,

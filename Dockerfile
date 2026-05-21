@@ -1,4 +1,4 @@
-# DUC Advanced -- interactive disk-usage visualizer.
+# Strata -- interactive disk-usage visualizer.
 FROM debian:trixie-slim
 
 RUN set -eux; \
@@ -19,15 +19,15 @@ COPY cgi/                       /var/www/html/cgi-bin/
 RUN chmod +x /app/entrypoint.sh /app/scan-loop.sh /var/www/html/cgi-bin/api.cgi
 
 # Defaults -- override these in docker-compose to change what gets scanned.
-ENV DUC_SCAN_PATHS="/mnt/hdd-pool /mnt/ssd-pool" \
-    DUC_SCAN_INTERVAL="86400" \
-    DUC_KEEP_SNAPSHOTS="30" \
-    DUC_SCAN_ON_START="" \
-    DUC_HARDLINK_PRIORITY="" \
-    DUC_HARDLINK_COPIES="" \
-    DUC_DB_DIR="/var/lib/duc" \
-    DUC_LIB_DIR="/app/lib" \
-    DUC_APP_DIR="/app"
+ENV STRATA_SCAN_PATHS="/mnt/hdd-pool /mnt/ssd-pool" \
+    STRATA_SCAN_INTERVAL="86400" \
+    STRATA_KEEP_SNAPSHOTS="30" \
+    STRATA_SCAN_ON_START="" \
+    STRATA_HARDLINK_PRIORITY="" \
+    STRATA_HARDLINK_COPIES="" \
+    STRATA_DB_DIR="/var/lib/strata" \
+    STRATA_LIB_DIR="/app/lib" \
+    STRATA_APP_DIR="/app"
 
 EXPOSE 8000
 ENTRYPOINT ["/app/entrypoint.sh"]

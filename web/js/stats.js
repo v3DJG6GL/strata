@@ -1,5 +1,5 @@
 /* ==========================================================================
- * stats.js — telemetry readout component for DUC Advanced
+ * stats.js — telemetry readout component for Strata
  *
  * Exposes a global `Stats` with two renderers that share ONE visual language:
  *   Stats.renderLive(container, statusJson)   — live scan progress (#/)
@@ -198,7 +198,7 @@
       meter(cpuPct != null ? Number(cpuPct) / 100 : 0, "--green"),
       row("Status", st.status_desc || "—", null, false),
       row(
-        "Memory · duc",
+        "Memory · indexer",
         st.mem_mb != null ? Number(st.mem_mb).toFixed(1) : "—",
         " MiB"
       ),
@@ -301,7 +301,7 @@
     grid.appendChild(
       section("Scan", [
         row("Timestamp", stats.ts || "—"),
-        row("Indexer", stats.indexer || stats.duc_version || "—"),
+        row("Indexer", stats.indexer || "—"),
         row("Started", U.epochToStr(stats.start)),
         row("Finished", U.epochToStr(stats.end)),
         row(

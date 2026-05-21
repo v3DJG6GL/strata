@@ -1,5 +1,5 @@
 /* ==========================================================================
- * compare.js — scan-comparison page for DUC Advanced
+ * compare.js — scan-comparison page for Strata
  *
  * Renders a "diff" view between two scans: a prominent delta header, two scan
  * selectors + a metric toggle, a delta-coloured sunburst, and a sortable /

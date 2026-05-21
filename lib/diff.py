@@ -1,6 +1,6 @@
-"""Compare two duc snapshots into a delta tree, summary and change list.
+"""Compare two snapshots into a delta tree, summary and change list.
 
-Operates on the pre-aggregated `duc-<ts>.tree.json` artifacts produced by
+Operates on the pre-aggregated `strata-<ts>.tree.json` artifacts produced by
 aggregate.py. Real directories are matched by absolute path; the synthetic
 "(other)" buckets are paired positionally under their shared parent.
 
@@ -16,7 +16,7 @@ subtree rather than once per descendant.
 
 import json
 
-# Size deltas with magnitude at or below this count as "unchanged" (duc sizes
+# Size deltas with magnitude at or below this count as "unchanged" (sizes
 # wobble by a filesystem block between otherwise-identical scans).
 EPS = 4096
 

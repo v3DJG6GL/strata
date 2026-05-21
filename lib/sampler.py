@@ -1,6 +1,6 @@
-"""Sample a running `duc index` process into a JSON-lines log.
+"""Sample a running indexer process into a JSON-lines log.
 
-duc only exposes scan progress through a log it overwrites; CPU, memory, I/O
+The indexer reports only scan progress (a path and counts); CPU, memory, I/O
 and the current directory have to be read from /proc while the process runs.
 This sampler is launched by scan-loop.sh for the lifetime of one scan: it
 appends one JSON object per interval to a samples file. The API's `op=status`

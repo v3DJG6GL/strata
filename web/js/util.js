@@ -1,11 +1,11 @@
 /* ==========================================================================
- * util.js — formatting helpers for DUC Advanced
+ * util.js — formatting helpers for Strata
  * Exposes a single global `Util`. No dependencies.
  * ======================================================================== */
 (function (global) {
   "use strict";
 
-  /* duc-style human-readable byte sizes: binary (1024), 1 decimal place.
+  /* Human-readable byte sizes: binary (1024), 1 decimal place.
    * Examples: 2.0T, 245.5G, 10.2M, 4.0K, 512
    * Bytes below 1K are shown as a bare integer (no suffix, no decimal). */
   function humanBytes(n) {
