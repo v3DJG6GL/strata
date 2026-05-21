@@ -148,6 +148,20 @@
     return "/" + parts[0] + "/…/" + tail;
   }
 
+  /* Measure a string's rendered width via an offscreen 2-D canvas. `fontPx`
+   * is the font size in whatever units the caller is working in (the result
+   * comes back in the same units). Used to fit chart labels precisely. */
+  var _measureCtx = null;
+  function textWidth(text, fontPx, weight) {
+    if (!_measureCtx) {
+      _measureCtx = document.createElement("canvas").getContext("2d");
+    }
+    _measureCtx.font =
+      (weight || 500) + " " + (fontPx || 14) + 'px "Segoe UI", system-ui, ' +
+      "-apple-system, Roboto, Helvetica, Arial, sans-serif";
+    return _measureCtx.measureText(text == null ? "" : String(text)).width;
+  }
+
   global.Util = {
     humanBytes: humanBytes,
     exactBytes: exactBytes,
@@ -162,6 +176,7 @@
     coalesce: coalesce,
     orDash: orDash,
     esc: esc,
-    shortPath: shortPath
+    shortPath: shortPath,
+    textWidth: textWidth
   };
 })(window);

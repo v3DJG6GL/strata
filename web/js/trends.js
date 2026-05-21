@@ -13,6 +13,9 @@
   var d3 = global.d3;
   var U = global.Util;
 
+  /* ResizeObserver from the last render (disconnected on the next render). */
+  var resizeObs = null;
+
   /* "2026-05-20_22-37" -> Date, or null if unparseable. */
   function tsToDate(ts) {
     var p = String(ts || "").split("_");
@@ -186,6 +189,17 @@
       .on("mouseleave blur", function () {
         tip.style.display = "none";
       });
+
+    /* counter-scale axis-label text so it stays a constant pixel size: the
+     * fixed viewBox would otherwise magnify it with the chart. */
+    function fitText() {
+      var w = svg.node().getBoundingClientRect().width;
+      svg.node().style.setProperty("--trend-k", w > 0 ? String(W / w) : "1");
+    }
+    fitText();
+    if (resizeObs) resizeObs.disconnect();
+    resizeObs = new ResizeObserver(fitText);
+    resizeObs.observe(svg.node());
 
     return true;
   }

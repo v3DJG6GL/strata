@@ -21,11 +21,12 @@
   var U = global.Util;
   var d3 = global.d3;
 
-  /* Label sizing, in SVG user units. The CSS .sb-label font-size must match
-   * LABEL_FONT so the arc-fit math below stays accurate. */
-  var LABEL_FONT = 14;
-  var LABEL_CHAR_W = LABEL_FONT * 0.54; // approx sans-serif glyph advance
-  var LABEL_MIN_CHARS = 3; // hide a label that cannot fit at least this many
+  /* Label sizing. LABEL_FONT is the on-screen pixel size labels should keep
+   * regardless of how large the SVG is displayed; it is counter-scaled into
+   * SVG user units via textK (see measureTextK). */
+  var LABEL_FONT = 13;
+  var LABEL_PAD = 10; // radial padding inside a ring band (user units)
+  var LABEL_AREA = 0.03; // clutter gate: min (Δy)·(Δx) for a slice to be labelled
   /* Zoom transition duration. */
   var TWEEN_MS = 750;
 
@@ -42,6 +43,7 @@
     var totalSize = 1; // scan-total size for "% of scan" tooltip math
     var ringCount = 2; // rings of children rendered at once (2..5)
     var hlMode = "dedupe"; // hard-link view: "dedupe" | "copies" | "exclusive"
+    var textK = 1; // (viewBox units) / (rendered px) — counter-scales label text
 
     /* ---- DOM scaffold --------------------------------------------------- */
     containerEl.classList.add("sb-root");
@@ -129,21 +131,19 @@
       .append("circle")
       .attr("r", radius)
       .attr("class", "sb-center-circle");
+    /* center text — updateCenter() sizes and positions these explicitly */
     var centerLabel = centerG
       .append("text")
       .attr("class", "sb-center-label")
-      .attr("text-anchor", "middle")
-      .attr("dy", "-0.2em");
+      .attr("text-anchor", "middle");
     var centerSub = centerG
       .append("text")
       .attr("class", "sb-center-sub")
-      .attr("text-anchor", "middle")
-      .attr("dy", "1.1em");
+      .attr("text-anchor", "middle");
     var centerHint = centerG
       .append("text")
       .attr("class", "sb-center-hint")
-      .attr("text-anchor", "middle")
-      .attr("dy", "2.6em");
+      .attr("text-anchor", "middle");
 
     /* spinner ring (shown over a ring while lazily loading) */
     var spinner = svg
@@ -176,6 +176,24 @@
       .outerRadius(function (d) {
         return Math.max(d.y0 * radius, d.y1 * radius - 1);
       });
+
+    /* ---- constant-size text -------------------------------------------- */
+    /* The SVG keeps a fixed viewBox, so displaying it larger magnifies
+     * everything — text included. textK counter-scales label fonts so they
+     * stay a constant on-screen size while arcs/rings still scale. A
+     * ResizeObserver re-fits on SCALE changes and window/container resizes. */
+    function measureTextK() {
+      var w = svg.node().getBoundingClientRect().width;
+      textK = w > 0 ? size / w : 1;
+    }
+    var roRaf = 0;
+    var resizeObs = new ResizeObserver(function () {
+      cancelAnimationFrame(roRaf);
+      roRaf = requestAnimationFrame(function () {
+        if (root) render();
+      });
+    });
+    resizeObs.observe(svg.node());
 
     /* ---- color --------------------------------------------------------- */
     /* Categorical hue per depth-1 directory; descendants share the hue with
@@ -340,28 +358,48 @@
       return d.y0 >= 1 && d.y1 <= ringCount + 1 && d.x1 > d.x0;
     }
 
-    /* Monospace chars that fit tangentially along an arc's mid-radius band. */
-    function arcChars(c) {
+    /* Label font size in SVG user units (counter-scaled to a constant px). */
+    function labelFontUnits() {
+      return LABEL_FONT * textK;
+    }
+
+    /* Radial space a spoke label may occupy in this ring band (user units).
+     * Labels run radially, so the budget is the band thickness — NOT the
+     * tangential arc length (measuring that was the truncation bug). */
+    function bandLength(c) {
+      return (c.y1 - c.y0) * radius - LABEL_PAD;
+    }
+
+    /* May this slice host a label? It must be in a visible ring, angularly
+     * thick enough for the glyph height, and not a clutter-tiny sliver. */
+    function labelFits(c) {
+      if (!arcVisible(c)) return false;
       var midR = ((c.y0 + c.y1) / 2) * radius;
-      return Math.floor(((c.x1 - c.x0) * midR) / LABEL_CHAR_W);
+      if ((c.x1 - c.x0) * midR < labelFontUnits() * 1.15) return false;
+      return (c.y1 - c.y0) * (c.x1 - c.x0) > LABEL_AREA;
     }
 
-    /* A label shows only if its arc is visible AND wide enough for a few
-     * chars — this is what stops tiny slices from stacking unreadable
-     * fragments (e.g. on the collapsed 0° seam). */
-    function labelVisible(c) {
-      return arcVisible(c) && arcChars(c) >= LABEL_MIN_CHARS;
+    /* Truncate `name` to fit `avail` user units along the spoke, with an
+     * ellipsis; "" when not even one character fits. */
+    function fitLabel(name, avail) {
+      name = name == null ? "" : String(name);
+      if (avail <= 0) return "";
+      var fs = labelFontUnits();
+      if (U.textWidth(name, fs) <= avail) return name;
+      var lo = 0,
+        hi = name.length;
+      while (lo < hi) {
+        var mid = (lo + hi + 1) >> 1;
+        if (U.textWidth(name.slice(0, mid) + "…", fs) <= avail) lo = mid;
+        else hi = mid - 1;
+      }
+      return lo >= 1 ? name.slice(0, lo) + "…" : "";
     }
 
-    /* Fit a node's name to its arc; ellipsize only when it genuinely cannot
-     * fit, and return "" when the arc is too small for any label at all. */
-    function labelText(node, c) {
-      var name =
-        node.data && node.data.name != null ? String(node.data.name) : "";
-      var max = arcChars(c);
-      if (max < LABEL_MIN_CHARS) return "";
-      if (name.length <= max) return name;
-      return name.slice(0, Math.max(1, max - 1)) + "…";
+    /* The label text to draw for a node given a coord set ("" = hidden). */
+    function labelFor(node, c) {
+      if (!labelFits(c)) return "";
+      return fitLabel(node.data && node.data.name, bandLength(c));
     }
 
     function labelTransform(d) {
@@ -378,15 +416,9 @@
       );
     }
 
-    function ellipsize(text, maxChars) {
-      if (text == null) return "";
-      text = String(text);
-      if (text.length <= maxChars) return text;
-      return text.slice(0, Math.max(1, maxChars - 1)) + "…";
-    }
-
     /* ---- render --------------------------------------------------------- */
     function render() {
+      measureTextK(); // keep label font constant px for the current display
       var nodes = root.descendants().filter(function (d) {
         return d.depth > 0; // skip synthetic root (it's the center disc)
       });
@@ -406,6 +438,7 @@
         .append("path")
         .attr("class", "sb-arc")
         .attr("fill-rule", "evenodd")
+        .attr("vector-effect", "non-scaling-stroke")
         .style("cursor", "pointer")
         .on("click", onArcClick)
         .on("mousemove", onArcMove)
@@ -429,7 +462,8 @@
           return arc(d.current);
         });
 
-      /* LABELS */
+      /* LABELS — counter-scaled font; radial spokes fitted to the band */
+      gLabels.attr("font-size", labelFontUnits());
       var labels = gLabels.selectAll("text.sb-label").data(nodes, nodeKey);
       labels.exit().remove();
       var labelsEnter = labels
@@ -437,18 +471,17 @@
         .append("text")
         .attr("class", "sb-label")
         .attr("dy", "0.32em");
-      var labelsAll = labelsEnter.merge(labels);
-      labelsAll
-        .attr("opacity", function (d) {
-          /* element opacity, not fill-opacity: also hides the dark stroke
-           * halo, otherwise hidden outer-ring labels leak as dark shards. */
-          return labelVisible(d.current) ? 1 : 0;
-        })
+      labelsEnter
+        .merge(labels)
         .attr("transform", function (d) {
           return labelTransform(d.current);
         })
         .text(function (d) {
-          return labelText(d, d.current);
+          return labelFor(d, d.current);
+        })
+        /* element opacity also hides the dark halo of an empty/hidden label */
+        .attr("opacity", function () {
+          return this.textContent ? 1 : 0;
         });
 
       updateCenter();
@@ -480,12 +513,47 @@
       centerG.style("cursor", atRoot ? "default" : "pointer");
       centerCircle.classed("sb-center-clickable", !atRoot);
 
-      var name = atRoot
-        ? "(scan)"
-        : ellipsize(f.data.name || f.data.path || "/", 18);
-      centerLabel.text(name);
-      centerSub.text(U.humanBytes(nodeSize(f.data)));
-      centerHint.text(atRoot ? "" : "↑ click to zoom out");
+      /* candidate lines {element, base px, text}; the hint is dropped at root.
+       * Fonts are counter-scaled (textK) like the ring labels. */
+      var cand = [
+        {
+          el: centerLabel,
+          px: 14,
+          text: fitLabel(
+            atRoot ? "(scan)" : f.data.name || f.data.path || "/",
+            radius * 1.7
+          )
+        },
+        { el: centerSub, px: 18, text: U.humanBytes(nodeSize(f.data)) }
+      ];
+      if (!atRoot) {
+        cand.push({ el: centerHint, px: 10, text: "↑ click to zoom out" });
+      }
+
+      /* drop trailing lines until the stacked block fits inside the hole */
+      var LH = 1.34;
+      function blockHeight(n) {
+        var h = 0;
+        for (var i = 0; i < n; i++) h += cand[i].px * textK * LH;
+        return h;
+      }
+      var keep = cand.length;
+      while (keep > 1 && blockHeight(keep) > radius * 1.55) keep--;
+
+      [centerLabel, centerSub, centerHint].forEach(function (el) {
+        el.style("display", "none");
+      });
+      var y = -blockHeight(keep) / 2;
+      for (var i = 0; i < keep; i++) {
+        var c = cand[i];
+        var lh = c.px * textK * LH;
+        c.el
+          .style("display", null)
+          .attr("font-size", c.px * textK)
+          .attr("y", y + lh * 0.72)
+          .text(c.text);
+        y += lh;
+      }
 
       centerG.on("click", function () {
         if (focusNode && focusNode.parent) zoomTo(focusNode.parent);
@@ -663,8 +731,16 @@
           rows.push(tipRow(r.k, r.v));
         });
       } else {
+        /* show both sizes so the Actual/Apparent distinction is always
+         * visible — they are equal unless a directory holds sparse or
+         * sub-block files. */
+        var saV = Number(data.size_actual || 0);
+        var skV = Number(data.size_apparent || 0);
         rows.push(
-          tipRow("Size", U.humanBytes(sz) + "  ·  " + U.exactBytes(sz) + " B")
+          tipRow("On disk", U.humanBytes(saV) + "  ·  " + U.exactBytes(saV) + " B")
+        );
+        rows.push(
+          tipRow("Apparent", U.humanBytes(skV) + "  ·  " + U.exactBytes(skV) + " B")
         );
         rows.push(tipRow("% of parent", U.pctStr(sz, parentSz)));
         rows.push(tipRow("% of scan", U.pctStr(sz, totalSize)));
@@ -929,17 +1005,17 @@
           return arcVisible(d.target) ? "auto" : "none";
         });
 
-      /* Re-fit label text to the destination geometry up front, then tween
-       * position and fade opacity to the target visibility. */
+      /* Re-fit label text to the destination geometry, then tween position
+       * and fade opacity to the target visibility. */
+      gLabels.attr("font-size", labelFontUnits());
       gLabels
         .selectAll("text.sb-label")
         .text(function (d) {
-          return labelText(d, d.target);
+          return labelFor(d, d.target);
         })
         .transition(t)
-        .attr("opacity", function (d) {
-          /* element opacity (hides fill + stroke halo of hidden labels) */
-          return labelVisible(d.target) ? 1 : 0;
+        .attr("opacity", function () {
+          return this.textContent ? 1 : 0;
         })
         .attrTween("transform", function (d) {
           return function () {
@@ -1069,6 +1145,8 @@
       focusByPath: focusByPath,
       destroy: function () {
         if (tip && tip.parentNode) tip.parentNode.removeChild(tip);
+        resizeObs.disconnect();
+        cancelAnimationFrame(roRaf);
       }
     };
   }

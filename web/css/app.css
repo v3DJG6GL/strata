@@ -923,10 +923,10 @@ button {
  * font-size is in SVG user units and must match LABEL_FONT in sunburst.js. */
 .sb-label {
   /* the app's UI sans, not mono — directory names are labels, not numerics;
-   * medium weight + a thin soft halo, so labels sit in the theme rather than
-   * looking like heavy outlined stickers. */
+   * medium weight + a thin soft halo. font-size is set from JS (counter-
+   * scaled so it stays a constant pixel size); non-scaling-stroke keeps the
+   * halo a constant pixel width too. */
   font-family: var(--sans);
-  font-size: 14px;
   font-weight: 500;
   fill: var(--text-bright);
   letter-spacing: 0.01em;
@@ -934,6 +934,7 @@ button {
   stroke: rgba(13, 17, 23, 0.62);
   stroke-width: 2px;
   stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
 }
 
 /* center disc */
@@ -950,21 +951,20 @@ button {
   fill: var(--panel-hi);
   stroke: var(--accent);
 }
+/* center-disc text — font-size + y are set from JS (updateCenter), which
+ * counter-scales them and lays the lines out without overlap. */
 .sb-center-label {
   fill: var(--text-bright);
-  font-size: 15px;
   font-weight: 700;
   font-family: var(--mono);
 }
 .sb-center-sub {
   fill: var(--accent);
-  font-size: 18px;
   font-weight: 700;
   font-family: var(--mono);
 }
 .sb-center-hint {
   fill: var(--dim);
-  font-size: 9.5px;
   font-family: var(--mono);
 }
 
@@ -2109,7 +2109,8 @@ button {
 .trend-ylab,
 .trend-xlab {
   font-family: var(--mono);
-  font-size: 11px;
+  /* counter-scaled so axis labels stay ~11px at any rendered chart width */
+  font-size: calc(11px * var(--trend-k, 1));
   fill: var(--dim);
 }
 .trend-area {
