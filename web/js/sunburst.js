@@ -40,6 +40,8 @@
     var subtreeCache = {}; // path -> children array (lazy fetch cache)
     var pendingFetch = {}; // path -> true while a fetch is in flight
     var totalSize = 1; // scan-total size for "% of scan" tooltip math
+    var ringCount = 2; // rings of children rendered at once (2..5)
+    var hlMode = "dedupe"; // hard-link view: "dedupe" | "copies" | "exclusive"
 
     /* ---- DOM scaffold --------------------------------------------------- */
     containerEl.classList.add("sb-root");
@@ -56,17 +58,40 @@
     var chartWrap = el("div", "sb-chart");
     layout.appendChild(chartWrap);
 
-    /* toolbar — size-type toggle */
+    /* toolbar — segmented view controls */
     var toolbar = el("div", "sb-toolbar");
+
+    function ctlGroup(label, group, items, active, cls) {
+      var html =
+        '<div class="sb-ctl' + (cls ? " " + cls : "") + '">' +
+        '<span class="sb-ctl-label">' + label + "</span>" +
+        '<div class="sb-toggle" role="group">';
+      items.forEach(function (it) {
+        html +=
+          '<button type="button" data-g="' + group + '" data-v="' + it[0] + '"' +
+          (it[0] === active ? ' class="active"' : "") + ">" + it[1] + "</button>";
+      });
+      return html + "</div></div>";
+    }
+
     toolbar.innerHTML =
-      '<span class="sb-toolbar-label">SIZE</span>' +
-      '<div class="sb-toggle" role="group">' +
-      '<button type="button" data-k="size_actual" class="active">Actual</button>' +
-      '<button type="button" data-k="size_apparent">Apparent</button>' +
-      "</div>";
+      ctlGroup("SIZE", "size",
+        [["size_actual", "Actual"], ["size_apparent", "Apparent"]],
+        "size_actual", "sb-ctl-layout") +
+      ctlGroup("HARD LINKS", "hl",
+        [["dedupe", "Deduped"], ["copies", "+ Copies"], ["exclusive", "Exclusive"]],
+        "dedupe", "sb-ctl-layout") +
+      ctlGroup("RINGS", "rings",
+        [["2", "2"], ["3", "3"], ["4", "4"], ["5", "5"]], "2") +
+      ctlGroup("SCALE", "scale",
+        [["s", "S"], ["m", "M"], ["l", "L"], ["full", "Full"]], "l");
     chartWrap.appendChild(toolbar);
-    /* compare mode supplies its own metric control — hide the built-in one */
-    if (opts.compareMode) toolbar.style.display = "none";
+    /* compare mode lays the chart out itself — hide the layout-only controls */
+    if (opts.compareMode) {
+      toolbar.querySelectorAll(".sb-ctl-layout").forEach(function (g) {
+        g.style.display = "none";
+      });
+    }
 
     var svgHost = el("div", "sb-svg-host");
     chartWrap.appendChild(svgHost);
@@ -81,12 +106,13 @@
 
     /* ---- D3 svg --------------------------------------------------------- */
     var size = 720; // logical viewBox size
-    var radius = size / 6; // ring band thickness
+    // ring band thickness — center disc + ringCount rings span the radius
+    var radius = size / (2 * (ringCount + 1));
 
     var svg = d3
       .select(svgHost)
       .append("svg")
-      .attr("class", "sb-svg")
+      .attr("class", "sb-svg sb-scale-l")
       .attr("viewBox", [-size / 2, -size / 2, size, size])
       .attr("preserveAspectRatio", "xMidYMid meet");
 
@@ -124,7 +150,7 @@
       .append("g")
       .attr("class", "sb-spinner")
       .style("display", "none");
-    spinner
+    var spinnerRing = spinner
       .append("circle")
       .attr("r", radius * 1.55)
       .attr("class", "sb-spinner-ring");
@@ -141,7 +167,9 @@
       .padAngle(function (d) {
         return Math.min((d.x1 - d.x0) / 2, 0.004);
       })
-      .padRadius(radius * 1.5)
+      .padRadius(function () {
+        return radius * 1.5;
+      })
       .innerRadius(function (d) {
         return d.y0 * radius;
       })
@@ -187,12 +215,24 @@
       return e;
     }
 
-    /* The size value used for layout/colors, respecting the toggle. */
+    /* The size value used for layout, honoring the size-type and hard-link
+     * view toggles. Falls back gracefully for trees without the newer
+     * exclusive/copy fields. */
     function nodeSize(data) {
       if (!data) return 0;
-      var v = data[sizeKey];
-      if (v == null) v = data.size_actual;
-      return v != null ? Number(v) : 0;
+      var ap = sizeKey === "size_apparent";
+      var base = Number(
+        (ap ? data.size_apparent : data.size_actual) || data.size_actual || 0
+      );
+      if (hlMode === "exclusive") {
+        var ex = ap ? data.exclusive_apparent : data.exclusive_actual;
+        return ex != null ? Number(ex) : base;
+      }
+      if (hlMode === "copies") {
+        var cp = ap ? data.copy_apparent : data.copy_actual;
+        return base + (cp != null ? Number(cp) : 0);
+      }
+      return base;
     }
 
     /* Does this data node have real, expandable children present? */
@@ -297,7 +337,7 @@
     }
 
     function arcVisible(d) {
-      return d.y1 <= 3 && d.y0 >= 1 && d.x1 > d.x0;
+      return d.y0 >= 1 && d.y1 <= ringCount + 1 && d.x1 > d.x0;
     }
 
     /* Monospace chars that fit tangentially along an arc's mid-radius band. */
@@ -640,6 +680,25 @@
               : childDirs + (data.truncated ? "+ (truncated)" : "")
           )
         );
+        /* hard-link breakdown, shown only when this subtree has any */
+        var apK = sizeKey === "size_apparent";
+        var dedup = Number(
+          (apK ? data.size_apparent : data.size_actual) || data.size_actual || 0
+        );
+        var exV = apK ? data.exclusive_apparent : data.exclusive_actual;
+        var cpV = apK ? data.copy_apparent : data.copy_actual;
+        if (exV != null && Number(exV) < dedup) {
+          rows.push(
+            tipRow(
+              "Exclusive",
+              U.humanBytes(Number(exV)) +
+                "  ·  shared " + U.humanBytes(dedup - Number(exV))
+            )
+          );
+        }
+        if (cpV) {
+          rows.push(tipRow("Hard-link copies", U.humanBytes(Number(cpV))));
+        }
       }
 
       tip.innerHTML = rows.join("");
@@ -951,17 +1010,9 @@
       return best;
     }
 
-    /* ---- size-type toggle ---------------------------------------------- */
-    toolbar.addEventListener("click", function (e) {
-      var btn = e.target.closest("button[data-k]");
-      if (!btn) return;
-      var k = btn.getAttribute("data-k");
-      if (k === sizeKey) return;
-      sizeKey = k;
-      toolbar.querySelectorAll("button[data-k]").forEach(function (b) {
-        b.classList.toggle("active", b === btn);
-      });
-      /* re-layout & recolor, preserving focus */
+    /* ---- toolbar controls ---------------------------------------------- */
+    /* Rebuild the hierarchy and re-render, keeping the user's focus. */
+    function relayout() {
       var prevFocus = focusNode ? focusNode.data.path : "";
       root = buildHierarchy();
       focusNode = findHierByPath(prevFocus) || root;
@@ -970,6 +1021,41 @@
         d.current = d.target;
       });
       render();
+    }
+
+    /* Recompute geometry for a new ring count. */
+    function applyRings(n) {
+      ringCount = Math.max(2, Math.min(5, n));
+      radius = size / (2 * (ringCount + 1));
+      centerCircle.attr("r", radius);
+      spinnerRing.attr("r", radius * (ringCount + 1) * 0.92);
+    }
+
+    toolbar.addEventListener("click", function (e) {
+      var btn = e.target.closest("button[data-g]");
+      if (!btn) return;
+      var group = btn.getAttribute("data-g");
+      var value = btn.getAttribute("data-v");
+      toolbar
+        .querySelectorAll('button[data-g="' + group + '"]')
+        .forEach(function (b) {
+          b.classList.toggle("active", b === btn);
+        });
+
+      if (group === "size") {
+        if (value === sizeKey) return;
+        sizeKey = value;
+        relayout();
+      } else if (group === "hl") {
+        if (value === hlMode) return;
+        hlMode = value;
+        relayout();
+      } else if (group === "rings") {
+        applyRings(parseInt(value, 10) || 2);
+        relayout();
+      } else if (group === "scale") {
+        svg.attr("class", "sb-svg sb-scale-" + value);
+      }
     });
 
     return {

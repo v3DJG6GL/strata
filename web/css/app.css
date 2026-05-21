@@ -821,17 +821,20 @@ button {
   min-width: 0;
 }
 
-/* size-type toggle */
+/* sunburst control bar — segmented toggles above the chart */
 .sb-toolbar {
-  position: absolute;
-  top: 16px;
-  left: 16px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 9px;
-  z-index: 2;
+  gap: 8px 18px;
+  padding: 14px 16px 6px;
 }
-.sb-toolbar-label {
+.sb-ctl {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.sb-ctl-label {
   font-family: var(--mono);
   font-size: 10px;
   letter-spacing: 0.12em;
@@ -848,8 +851,9 @@ button {
   background: transparent;
   border: none;
   color: var(--dim);
+  font-family: var(--mono);
   font-size: 11px;
-  padding: 5px 11px;
+  padding: 5px 10px;
   cursor: pointer;
   transition: background 0.14s, color 0.14s;
 }
@@ -871,23 +875,29 @@ button {
 }
 .sb-svg {
   width: 100%;
-  max-width: 760px;
   height: auto;
   display: block;
+  transition: max-width 0.2s var(--ease);
 }
+.sb-svg.sb-scale-s { max-width: 430px; }
+.sb-svg.sb-scale-m { max-width: 580px; }
+.sb-svg.sb-scale-l { max-width: 760px; }
+.sb-svg.sb-scale-full { max-width: none; }
 
 /* arcs */
 .sb-arc {
   stroke: var(--bg);
   stroke-width: 1;
   /* fill/stroke opacity are animated by d3 transitions — don't double up */
-  transition: filter 0.18s;
+  transition: filter 0.18s, opacity 0.18s;
 }
 .sb-arc-hi {
   filter: brightness(1.22) saturate(1.15);
 }
 .sb-arc-dim {
-  fill-opacity: 0.22 !important;
+  /* element opacity, NOT fill-opacity: keeps already-hidden arcs (outer
+   * rings) invisible instead of forcing them partly visible on hover. */
+  opacity: 0.3;
 }
 .sb-arc-anc {
   stroke: var(--text-bright);
