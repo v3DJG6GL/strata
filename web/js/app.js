@@ -103,6 +103,13 @@
       header() +
       '<main class="page page-dashboard">' +
       '<div id="live-slot"></div>' +
+      '<section class="trend-section" id="trend-section" hidden>' +
+      '<div class="section-head">' +
+      '<h2 class="section-title">Storage over time</h2>' +
+      '<span class="section-meta">click a point to open that scan</span>' +
+      "</div>" +
+      '<div id="trend-slot"></div>' +
+      "</section>" +
       '<section class="snap-section">' +
       '<div class="section-head">' +
       '<h2 class="section-title">Snapshots</h2>' +
@@ -161,6 +168,14 @@
       grid.appendChild(snapshotCard(s, i));
     });
     listEl.appendChild(grid);
+
+    /* storage-over-time chart — shown only when there are >=2 dated scans */
+    var trendSlot = document.getElementById("trend-slot");
+    var trendSec = document.getElementById("trend-section");
+    if (trendSlot && global.Trends) {
+      var drawn = global.Trends.render(trendSlot, snaps);
+      if (trendSec) trendSec.hidden = !drawn;
+    }
   }
 
   function snapshotCard(s, index) {

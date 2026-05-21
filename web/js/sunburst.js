@@ -23,8 +23,8 @@
 
   /* Label sizing, in SVG user units. The CSS .sb-label font-size must match
    * LABEL_FONT so the arc-fit math below stays accurate. */
-  var LABEL_FONT = 15;
-  var LABEL_CHAR_W = LABEL_FONT * 0.6; // approx monospace glyph advance
+  var LABEL_FONT = 14;
+  var LABEL_CHAR_W = LABEL_FONT * 0.54; // approx sans-serif glyph advance
   var LABEL_MIN_CHARS = 3; // hide a label that cannot fit at least this many
   /* Zoom transition duration. */
   var TWEEN_MS = 750;

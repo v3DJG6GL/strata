@@ -922,13 +922,17 @@ button {
 /* arc labels — light text with a dark halo so they read on any arc colour.
  * font-size is in SVG user units and must match LABEL_FONT in sunburst.js. */
 .sb-label {
-  font-family: var(--mono);
-  font-size: 15px;
-  fill: #f4f6fb;
-  font-weight: 600;
+  /* the app's UI sans, not mono — directory names are labels, not numerics;
+   * medium weight + a thin soft halo, so labels sit in the theme rather than
+   * looking like heavy outlined stickers. */
+  font-family: var(--sans);
+  font-size: 14px;
+  font-weight: 500;
+  fill: var(--text-bright);
+  letter-spacing: 0.01em;
   paint-order: stroke;
-  stroke: rgba(3, 6, 12, 0.78);
-  stroke-width: 3.4px;
+  stroke: rgba(13, 17, 23, 0.62);
+  stroke-width: 2px;
   stroke-linejoin: round;
 }
 
@@ -2084,5 +2088,96 @@ button {
   .cmp-th:nth-child(6),
   .cmp-td:nth-child(6) {
     display: none;
+  }
+}
+
+/* ======================================================================= *
+ * STORAGE OVER TIME — dashboard trend chart (trends.js)                    *
+ * ======================================================================= */
+.trend-section {
+  margin-bottom: 30px;
+}
+.trend-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.trend-grid {
+  stroke: var(--border-soft);
+  stroke-width: 1;
+}
+.trend-ylab,
+.trend-xlab {
+  font-family: var(--mono);
+  font-size: 11px;
+  fill: var(--dim);
+}
+.trend-area {
+  fill: var(--accent-soft);
+}
+.trend-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-linejoin: round;
+}
+.trend-pt {
+  fill: var(--accent);
+  stroke: var(--bg);
+  stroke-width: 2;
+  transition: r 0.12s var(--ease);
+}
+.trend-hit {
+  fill: transparent;
+}
+.trend-dot:hover .trend-pt,
+.trend-dot:focus-visible .trend-pt {
+  r: 6;
+}
+.trend-tip {
+  position: absolute;
+  z-index: 5;
+  pointer-events: none;
+  background: var(--panel-hi);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 7px 11px;
+  box-shadow: var(--shadow);
+  white-space: nowrap;
+}
+.trend-tip-lab {
+  font-size: 12px;
+  color: var(--dim);
+}
+.trend-tip-val {
+  font-size: 13px;
+  color: var(--text-bright);
+}
+.trend-tip-d {
+  font-size: 12px;
+}
+.trend-tip-d.up {
+  color: var(--yellow);
+}
+.trend-tip-d.down {
+  color: var(--green);
+}
+
+/* ======================================================================= *
+ * ACCESSIBILITY POLISH                                                     *
+ * ======================================================================= */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
