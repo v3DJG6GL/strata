@@ -219,34 +219,81 @@
     resizeObs.observe(svg.node());
 
     /* ---- color --------------------------------------------------------- */
-    /* Categorical hue per depth-1 directory; descendants share the hue with
-     * a lightness ramp by depth. (other) buckets are neutral grey. */
-    var hueScale = d3.scaleOrdinal(
-      d3.quantize(d3.interpolateRainbow, 12).map(function (c) {
-        return c;
-      })
-    );
-    var hueAssign = {}; // depth-1 name -> base color
-    var hueIndex = 0;
+    /* Each top-level directory owns a hue, evenly spaced around the wheel.
+     * Descendants spread by sibling index across a shrinking sub-band of
+     * their parent's hue, so adjacent siblings always differ — in hue and a
+     * lightness zig-zag — while a whole subtree stays one recognisable
+     * colour family. Colours are index-based (independent of size and zoom)
+     * so they are computed once per (re)build and cached on `d._color`;
+     * assignColors() runs at the end of buildHierarchy(). */
+    var START_HUE = 210; // anchor hue for the first top-level directory
+    var SAT = 0.52; // constant saturation across the chart
+    var BAND_DECAY = 0.62; // each depth spreads its kids over this much less hue
+
+    function nodeLight(depth, sibIndex) {
+      // deeper rings a touch lighter; adjacent siblings zig-zag in lightness
+      var l = Math.min(0.66, 0.4 + Math.max(0, depth - 1) * 0.055);
+      l += sibIndex % 2 === 0 ? -0.04 : 0.04;
+      return Math.max(0.3, Math.min(0.72, l));
+    }
+
+    function paintNode(node, hue, sibIndex) {
+      var data = node.data || {};
+      if (data.other) { node._color = "#6e7681"; return; } // (other) bucket
+      if (data._files) { node._color = "#363b44"; return; } // own-files wedge
+      if (node.depth === 0) { node._color = "#30363d"; return; }
+      node._color = d3
+        .hsl(hue, SAT, nodeLight(node.depth, sibIndex))
+        .formatHex();
+    }
+
+    /* Paint `node`, then spread its children across [hue ± band/2] by index. */
+    function descendColor(node, hue, band, sibIndex) {
+      paintNode(node, hue, sibIndex);
+      var kids = node.children || [];
+      var n = kids.length;
+      if (!n) return;
+      var childBand = band * BAND_DECAY;
+      kids.forEach(function (k, i) {
+        var frac = n > 1 ? (i + 0.5) / n - 0.5 : 0;
+        descendColor(k, hue + band * frac, childBand, i);
+      });
+    }
+
+    /* Assign a stable `_color` to every node of hierarchy `h`. Colour
+     * families start at the first level that actually branches — trivial
+     * single-child wrapper rings (a lone scan root like `/data`) are painted
+     * a neutral slate and skipped, so a one-root scan still gets a full
+     * multi-hue chart instead of collapsing to a single family. */
+    function assignColors(h) {
+      h._color = "#30363d";
+      var familyRoot = h;
+      while (familyRoot.children && familyRoot.children.length === 1) {
+        familyRoot = familyRoot.children[0];
+        familyRoot._color = "#3a4150"; // neutral wrapper ring
+      }
+      var tops = familyRoot.children || [];
+      var realTops = tops.filter(function (d) {
+        return !(d.data && (d.data.other || d.data._files));
+      });
+      var nTop = Math.max(1, realTops.length);
+      // each family's hue band stays inside the gap to its neighbours
+      // (capped at 80°) so distinct subtrees never bleed together
+      var band0 = Math.min(80, (360 / nTop) * 0.6);
+      var realIdx = 0;
+      tops.forEach(function (top, i) {
+        var data = top.data || {};
+        if (data.other || data._files) {
+          descendColor(top, START_HUE, band0, i);
+          return;
+        }
+        descendColor(top, START_HUE + (360 / nTop) * realIdx, band0, i);
+        realIdx += 1;
+      });
+    }
 
     function colorFor(d) {
-      var data = d.data || {};
-      if (data.other) return "#6e7681"; // neutral grey for (other)
-      if (data._files) return "#363b44"; // synthetic "own files" wedge
-      // walk up to the depth-1 ancestor
-      var anc = d;
-      while (anc.depth > 1 && anc.parent) anc = anc.parent;
-      if (anc.depth === 0) return "#30363d";
-      var keyName = (anc.data && anc.data.name) || "root";
-      if (!(keyName in hueAssign)) {
-        hueAssign[keyName] = hueScale(hueIndex++);
-      }
-      var base = d3.hsl(hueAssign[keyName]);
-      base.s = Math.max(0.32, Math.min(0.62, base.s));
-      // lightness ramp: deeper = lighter, capped
-      var lvl = Math.max(0, d.depth - 1);
-      base.l = Math.min(0.74, 0.42 + lvl * 0.085);
-      return base.formatHex();
+      return (d && d._color) || "#30363d";
     }
 
     /* ---- helpers -------------------------------------------------------- */
@@ -355,6 +402,10 @@
         d.current = { x0: d.x0, x1: d.x1, y0: d.y0, y1: d.y1 };
         d.target = { x0: d.x0, x1: d.x1, y0: d.y0, y1: d.y1 };
       });
+
+      /* Stable, index-based colours — recomputed on every (re)build so
+       * lazily-grafted subtrees are coloured too, without shifting the rest. */
+      assignColors(h);
       return h;
     }
 
@@ -1068,8 +1119,6 @@
       };
       subtreeCache = {};
       pendingFetch = {};
-      hueAssign = {};
-      hueIndex = 0;
       totalSize = nodeSize(rawRoot) || 1;
 
       root = buildHierarchy();
