@@ -439,7 +439,9 @@
         .attr("dy", "0.32em");
       var labelsAll = labelsEnter.merge(labels);
       labelsAll
-        .attr("fill-opacity", function (d) {
+        .attr("opacity", function (d) {
+          /* element opacity, not fill-opacity: also hides the dark stroke
+           * halo, otherwise hidden outer-ring labels leak as dark shards. */
           return labelVisible(d.current) ? 1 : 0;
         })
         .attr("transform", function (d) {
@@ -935,7 +937,8 @@
           return labelText(d, d.target);
         })
         .transition(t)
-        .attr("fill-opacity", function (d) {
+        .attr("opacity", function (d) {
+          /* element opacity (hides fill + stroke halo of hidden labels) */
           return labelVisible(d.target) ? 1 : 0;
         })
         .attrTween("transform", function (d) {
