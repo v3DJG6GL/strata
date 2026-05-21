@@ -158,22 +158,41 @@ def _lca(dirs):
     return node
 
 
-def _rank(path, priority):
-    """Index of the first priority prefix matching `path`, else len(priority)."""
+def link_tier(path, priority, copies):
+    """Sort key (tier, sub-index) for a hard link's directory:
+
+      tier 0  link inside a DUC_HARDLINK_PRIORITY directory  (the "original")
+      tier 1  link inside a directory listed in neither
+      tier 2  link inside a DUC_HARDLINK_COPIES directory     (a "copy")
+
+    The longest matching prefix decides the tier, so a copy directory nested
+    inside a priority directory (or vice versa) is classed by the more
+    specific rule; an exact-length tie favours priority.
+    """
+    best_len = -1
+    tier = (1, 0)  # default: listed in neither
     for i, prefix in enumerate(priority):
-        if path == prefix or path.startswith(prefix + "/"):
-            return i
-    return len(priority)
+        if (path == prefix or path.startswith(prefix + "/")) and len(prefix) > best_len:
+            best_len = len(prefix)
+            tier = (0, i)
+    for i, prefix in enumerate(copies):
+        if (path == prefix or path.startswith(prefix + "/")) and len(prefix) > best_len:
+            best_len = len(prefix)
+            tier = (2, i)
+    return tier
 
 
-def _resolve_hardlinks(hardlinks, priority):
+def _resolve_hardlinks(hardlinks, priority, copies):
     """Attribute every multi-linked inode: one canonical directory (deduped
     size), the rest copies, and the exclusive contribution at the LCA."""
+    ranked = bool(priority or copies)
     for sa, sk, links in hardlinks.values():
-        # canonical = best-priority link; ties keep walk order (first seen).
-        if priority:
-            best = min(range(len(links)),
-                       key=lambda i: (_rank(dir_path(links[i]), priority), i))
+        # canonical = the best-tier link; ties keep walk order (first seen).
+        if ranked:
+            best = min(
+                range(len(links)),
+                key=lambda i: link_tier(dir_path(links[i]), priority, copies) + (i,),
+            )
             canonical = links[best]
         else:
             canonical = links[0]
@@ -245,13 +264,23 @@ def _to_node(d, path):
 # top level
 # --------------------------------------------------------------------------
 
-def hardlink_priority():
-    """Parse DUC_HARDLINK_PRIORITY (newline-separated directory prefixes)."""
-    raw = os.environ.get("DUC_HARDLINK_PRIORITY", "")
+def _dir_list(env_name):
+    """Parse a newline-separated directory-prefix list from an env var."""
+    raw = os.environ.get(env_name, "")
     return [ln.strip().rstrip("/") for ln in raw.splitlines() if ln.strip()]
 
 
-def run_index(scan_paths, priority, progress_path=None):
+def hardlink_priority():
+    """Directories whose hard links are preferred as the canonical original."""
+    return _dir_list("DUC_HARDLINK_PRIORITY")
+
+
+def hardlink_copies():
+    """Directories whose hard links are ranked last (treated as copies)."""
+    return _dir_list("DUC_HARDLINK_COPIES")
+
+
+def run_index(scan_paths, priority, copies, progress_path=None):
     """Walk every scan path. Returns the detail-tree root node (dict)."""
     root = Dir("(scan)", None, 0)
     hardlinks = {}
@@ -283,7 +312,7 @@ def run_index(scan_paths, priority, progress_path=None):
         ctr[1] += 1
         _walk(child, p, hardlinks, ctr, progress)
 
-    _resolve_hardlinks(hardlinks, priority)
+    _resolve_hardlinks(hardlinks, priority, copies)
     _finalize(root)
     progress(ctr)  # final tally
 
@@ -345,7 +374,9 @@ def main(argv):
         return 1
 
     sys.setrecursionlimit(20000)
-    detail, totals = run_index(scan_paths, hardlink_priority(), progress)
+    detail, totals = run_index(
+        scan_paths, hardlink_priority(), hardlink_copies(), progress
+    )
 
     with gzip.open(os.path.join(out, "duc-%s.full.json.gz" % ts), "wt") as f:
         json.dump(detail, f, separators=(",", ":"))

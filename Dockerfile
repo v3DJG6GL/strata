@@ -23,6 +23,7 @@ ENV DUC_SCAN_PATHS="/mnt/hdd-pool /mnt/ssd-pool" \
     DUC_SCAN_INTERVAL="86400" \
     DUC_KEEP_SNAPSHOTS="30" \
     DUC_HARDLINK_PRIORITY="" \
+    DUC_HARDLINK_COPIES="" \
     DUC_DB_DIR="/var/lib/duc" \
     DUC_LIB_DIR="/app/lib" \
     DUC_APP_DIR="/app"
