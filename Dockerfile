@@ -22,6 +22,7 @@ RUN chmod +x /app/entrypoint.sh /app/scan-loop.sh /var/www/html/cgi-bin/api.cgi
 ENV DUC_SCAN_PATHS="/mnt/hdd-pool /mnt/ssd-pool" \
     DUC_SCAN_INTERVAL="86400" \
     DUC_KEEP_SNAPSHOTS="30" \
+    DUC_SCAN_ON_START="" \
     DUC_HARDLINK_PRIORITY="" \
     DUC_HARDLINK_COPIES="" \
     DUC_DB_DIR="/var/lib/duc" \

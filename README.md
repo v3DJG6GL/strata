@@ -37,6 +37,7 @@ the image:
 | `DUC_SCAN_PATHS`        | `/mnt/hdd-pool /mnt/ssd-pool`  | Space-separated directories to scan. |
 | `DUC_SCAN_INTERVAL`     | `86400`                        | Seconds between scans. |
 | `DUC_KEEP_SNAPSHOTS`    | `30`                           | Number of snapshots to retain. |
+| `DUC_SCAN_ON_START`     | *(none)*                       | Testing/dev. If truthy (`1`/`true`/`yes`/`on`), run a scan on every container start, overriding the recent-snapshot deferral. |
 | `DUC_HARDLINK_PRIORITY` | *(none)*                       | Directories whose hard links are preferred as the counted "original" — one directory per line. |
 | `DUC_HARDLINK_COPIES`   | *(none)*                       | Directories whose hard links are ranked last and treated as copies — one directory per line. |
 

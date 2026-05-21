@@ -13,6 +13,11 @@ services:
       DUC_SCAN_INTERVAL: "86400"
       # Number of snapshots to retain; older ones are pruned automatically.
       DUC_KEEP_SNAPSHOTS: "30"
+      # Testing/dev only. If truthy (1/true/yes/on), run a scan immediately on
+      # every container start/restart, overriding the recent-snapshot deferral
+      # (a normal start defers the first scan when a recent snapshot exists).
+      # Leave empty for production.
+      DUC_SCAN_ON_START: ""
       # Optional hardlink attribution. A file with several hard links is
       # counted once -- under one chosen directory; links elsewhere are
       # reported as free copies. The "original" is chosen in priority order:
