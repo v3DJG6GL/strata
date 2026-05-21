@@ -12,6 +12,7 @@ Every response is application/json; errors are returned as {"error": "..."}
 with HTTP 200 so the frontend can handle them uniformly.
 """
 
+import gzip
 import json
 import os
 import re
@@ -40,19 +41,20 @@ CLK_TCK = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
 # helpers
 # --------------------------------------------------------------------------
 
-def db_path(ts):
-    if not TS_RE.match(ts):
+def artifact(ts, suffix):
+    """Path to a snapshot artifact, validating the snapshot id first."""
+    if not TS_RE.match(ts or ""):
         raise ValueError("invalid snapshot id")
-    return os.path.join(DB_DIR, "duc-%s.db" % ts)
+    return os.path.join(DB_DIR, "duc-%s%s" % (ts, suffix))
 
 
 def list_snapshot_ts():
-    """All snapshot ids present in DB_DIR, newest first."""
+    """Snapshot ids that have an overview tree, newest first."""
     out = []
     try:
         for name in os.listdir(DB_DIR):
-            if name.startswith("duc-") and name.endswith(".db"):
-                ts = name[4:-3]
+            if name.startswith("duc-") and name.endswith(".tree.json"):
+                ts = name[4:-len(".tree.json")]
                 if TS_RE.match(ts):
                     out.append(ts)
     except OSError:
@@ -61,15 +63,34 @@ def list_snapshot_ts():
     return out
 
 
+def load_full_tree(ts):
+    """The indexer's full detail tree for a snapshot (gzipped JSON)."""
+    with gzip.open(artifact(ts, ".full.json.gz"), "rt") as f:
+        return json.load(f)
+
+
+def find_node(node, path):
+    """Locate the node at absolute `path` within a tree, or None."""
+    if (node.get("path") or "") == path:
+        return node
+    for c in node.get("children", []):
+        cp = c.get("path") or ""
+        if cp == path or path.startswith(cp + "/"):
+            hit = find_node(c, path)
+            if hit is not None:
+                return hit
+    return None
+
+
 def get_stats(ts):
-    """Return per-scan stats, generating and caching the sidecar if absent."""
-    sidecar = os.path.join(DB_DIR, "duc-%s.stats.json" % ts)
+    """Per-scan stats; rebuilt from the indexer totals if the sidecar is gone."""
+    sidecar = artifact(ts, ".stats.json")
     try:
         with open(sidecar) as f:
             return json.load(f)
     except (OSError, ValueError):
         pass
-    stats = scan_stats.build_stats(db_path(ts))
+    stats = scan_stats.build_stats(artifact(ts, ".totals.json"))
     try:  # best-effort cache; harmless if the volume is read-only
         with open(sidecar, "w") as f:
             json.dump(stats, f, separators=(",", ":"))
@@ -88,7 +109,7 @@ def humansize_count(text):
 
 
 def parse_progress():
-    """Extract (files_human, dirs_human) from the live progress log tail."""
+    """Extract (files, dirs, current_path) from the live progress log."""
     try:
         with open(PROGRESS, "rb") as f:
             f.seek(0, os.SEEK_END)
@@ -96,10 +117,14 @@ def parse_progress():
             f.seek(max(0, size - 8192))
             tail = f.read().decode("utf-8", "replace")
     except OSError:
-        return None, None
+        return None, None, None
     tail = tail.replace("\r", "\n")
-    files_h = dirs_h = None
+    files_h = dirs_h = cur_path = None
     for line in tail.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("At: "):
+            cur_path = stripped[4:] or None
+            continue
         if "file" not in line or "director" not in line:
             continue
         fm = re.search(r"([0-9]+(?:\.[0-9]+)?\s*[KMGT]?)\s*files", line, re.I)
@@ -108,7 +133,7 @@ def parse_progress():
             files_h = fm.group(1).replace(" ", "")
         if dm:
             dirs_h = dm.group(1).replace(" ", "")
-    return files_h, dirs_h
+    return files_h, dirs_h, cur_path
 
 
 def tail_samples(n=2):
@@ -145,7 +170,7 @@ def op_snapshots():
             "roots": None,
         }
         try:
-            entry["db_bytes"] = os.path.getsize(db_path(ts))
+            entry["db_bytes"] = os.path.getsize(artifact(ts, ".full.json.gz"))
         except OSError:
             pass
         try:
@@ -184,17 +209,17 @@ def op_status():
         "db_bytes": None, "db_growth_rate": None,
     }
 
-    files_h, dirs_h = parse_progress()
+    files_h, dirs_h, cur_path = parse_progress()
     res["files_human"], res["dirs_human"] = files_h, dirs_h
     res["files"] = humansize_count(files_h)
     res["dirs"] = humansize_count(dirs_h)
+    if cur_path:
+        res["current_path"] = cur_path
+        res["depth"] = max(0, cur_path.count("/"))
 
     samples = tail_samples(2)
     if samples:
         last = samples[-1]
-        if "cwd" in last:
-            res["current_path"] = last["cwd"]
-            res["depth"] = max(0, last["cwd"].count("/"))
         if "rss_kb" in last:
             res["mem_mb"] = round(last["rss_kb"] / 1024, 1)
         if "cmem_bytes" in last:
@@ -218,12 +243,6 @@ def op_status():
                 if "write_bytes" in last and "write_bytes" in prev:
                     res["write_rate"] = round((last["write_bytes"] - prev["write_bytes"]) / dt / 1048576, 2)
 
-    inprogress = cur.get("inprogress_db")
-    if inprogress and os.path.exists(inprogress):
-        db_bytes = os.path.getsize(inprogress)
-        res["db_bytes"] = db_bytes
-        if elapsed and elapsed > 0:
-            res["db_growth_rate"] = round(db_bytes / elapsed / 1024, 1)
     return res
 
 
@@ -232,14 +251,14 @@ def op_stats(ts):
 
 
 def overview_tree(ts):
-    """The pre-aggregated overview tree node for a snapshot (built + cached)."""
-    cached = os.path.join(DB_DIR, "duc-%s.tree.json" % ts)
+    """The pre-aggregated overview tree for a snapshot (built + cached)."""
+    cached = artifact(ts, ".tree.json")
     try:
         with open(cached) as f:
             return json.load(f)
     except (OSError, ValueError):
         pass
-    node = aggregate.build_overview(db_path(ts))
+    node = aggregate.build_overview(load_full_tree(ts))
     try:  # best-effort cache
         with open(cached, "w") as f:
             json.dump(node, f, separators=(",", ":"))
@@ -250,7 +269,10 @@ def overview_tree(ts):
 
 def op_tree(ts, path):
     if path:
-        return {"ts": ts, "lazy": True, "node": aggregate.build_lazy(db_path(ts), path)}
+        sub = find_node(load_full_tree(ts), path)
+        if sub is None:
+            return {"ts": ts, "lazy": True, "error": "path not found in snapshot"}
+        return {"ts": ts, "lazy": True, "node": aggregate.build_lazy(sub)}
     return {"ts": ts, "lazy": False, "node": overview_tree(ts)}
 
 

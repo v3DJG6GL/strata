@@ -1,20 +1,12 @@
-# DUC Advanced -- interactive disk-usage visualizer built on duc.
+# DUC Advanced -- interactive disk-usage visualizer.
 FROM debian:trixie-slim
 
-# duc only ships in Debian unstable; pin *just* that package from sid while
-# keeping everything else on stable trixie.
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends \
-        lighttpd python3 ca-certificates procps; \
-    echo "deb http://deb.debian.org/debian sid main" > /etc/apt/sources.list.d/sid.list; \
-    printf 'Package: *\nPin: release a=unstable\nPin-Priority: 100\n\nPackage: duc\nPin: release a=unstable\nPin-Priority: 990\n' \
-        > /etc/apt/preferences.d/pin-sid; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends duc; \
+    apt-get install -y --no-install-recommends lighttpd python3 procps; \
     rm -rf /var/lib/apt/lists/*
 
-# Backend: Python helpers and shell scripts.
+# Backend: the inode-aware indexer, helpers and shell scripts.
 COPY lib/                       /app/lib/
 COPY docker/scan-loop.sh        /app/scan-loop.sh
 COPY docker/entrypoint.sh       /app/entrypoint.sh
@@ -30,6 +22,7 @@ RUN chmod +x /app/entrypoint.sh /app/scan-loop.sh /var/www/html/cgi-bin/api.cgi
 ENV DUC_SCAN_PATHS="/mnt/hdd-pool /mnt/ssd-pool" \
     DUC_SCAN_INTERVAL="86400" \
     DUC_KEEP_SNAPSHOTS="30" \
+    DUC_HARDLINK_PRIORITY="" \
     DUC_DB_DIR="/var/lib/duc" \
     DUC_LIB_DIR="/app/lib" \
     DUC_APP_DIR="/app"

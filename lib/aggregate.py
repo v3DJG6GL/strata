@@ -1,176 +1,114 @@
-"""Build aggregated directory trees from a duc database.
+"""Fold a full directory tree down to a bounded, browsable size.
 
-A full duc scan can hold millions of directories -- far too many to ship to a
-browser. This module streams `duc xml -x` and folds the tree down to a bounded
-size: each directory keeps only its largest children, the rest collapse into a
-synthetic "(other)" bucket, and the tree is capped at a maximum depth. Nodes
-that were folded or depth-capped are marked `truncated`, so the frontend can
-lazily fetch finer detail on demand.
+The indexer (indexer.py) produces a detail tree with one node per directory
+above ~1 MiB. That can still be tens of thousands of nodes, so the overview
+served to the browser is aggregated here: capped in depth, and small children
+collapsed into a synthetic "(other)" bucket.
 
-Node shape (one dict per directory):
-    name, path, size_actual, size_apparent, count, truncated, children[]
-An "(other)" bucket additionally carries: other=True, other_dirs=<n folded>.
+A child is kept (vs. folded) by an absolute-ish size threshold -- a fraction
+of its scan root -- NOT by rank, so a directory near the boundary does not
+flip in and out of "(other)" between scans and create spurious diff rows.
 
-CLI:
-    python3 aggregate.py <db>                 -> overview tree (all roots)
-    python3 aggregate.py <db> --path <abspath> -> lazy subtree for one path
+Every node carries the indexer's metrics, which the (other) bucket sums:
+  size_actual/apparent, exclusive_actual/apparent, copy_actual/apparent, count
 """
 
 import json
 import sys
-import xml.etree.ElementTree as ET
 
-import duc_export as duc
-
-# A child is kept (vs. folded into "(other)") by an absolute-ish size
-# threshold -- a fraction of its scan root -- NOT by rank. A rank cap would
-# make a directory near the boundary flip in and out of "(other)" between
-# scans, producing spurious added/removed rows when two snapshots are diffed.
-# max_children is only a safety valve against pathologically wide directories.
+# Overview: the whole filesystem, shallow. Lazy: a drilled subtree, wide.
 OVERVIEW = {"depth_cap": 9, "max_children": 250, "min_size_ratio": 0.0005}
-# Lazy subtree: fetched on drill-down, a few levels deep but wide.
 LAZY = {"depth_cap": 3, "max_children": 600, "min_size_ratio": 0.0}
 
+_SUM_FIELDS = (
+    "size_actual", "size_apparent",
+    "exclusive_actual", "exclusive_apparent",
+    "copy_actual", "copy_apparent",
+    "count",
+)
 
-def _finalize(frame, opts, root_total):
-    """Collapse one parsed directory frame into a finalized node dict."""
-    a = frame["attrs"]
-    node = {
-        "name": frame["name"],
-        "path": frame["path"],
-        "size_actual": int(a.get("size_actual", 0)),
-        "size_apparent": int(a.get("size_apparent", 0)),
-        "count": int(a.get("count", 0)),
+
+def _blank(node, status_keep=True):
+    """A shallow copy of `node`'s scalar fields with an empty child list."""
+    out = {
+        "name": node.get("name"),
+        "path": node.get("path"),
         "truncated": False,
         "children": [],
     }
-    kids = frame["kids"]
-    # At or past the depth cap we keep the node but drop its subtree.
-    if frame["depth"] >= opts["depth_cap"]:
-        node["truncated"] = bool(kids)
-        return node
-    if not kids:
-        return node
+    for f in _SUM_FIELDS:
+        out[f] = node.get(f, 0) or 0
+    if node.get("other"):
+        out["other"] = True
+        out["other_dirs"] = node.get("other_dirs", 0)
+    return out
 
-    kids.sort(key=lambda k: k["size_actual"], reverse=True)
+
+def _aggregate(node, opts, depth, root_total):
+    """Recursively fold one detail-tree node into an overview node."""
+    out = _blank(node)
+    kids = node.get("children") or []
+
+    if depth >= opts["depth_cap"]:
+        out["truncated"] = bool(kids)
+        return out
+    if not kids:
+        return out
+
+    folded = [_aggregate(c, opts, depth + 1, root_total) for c in kids]
+    folded.sort(key=lambda k: k["size_actual"], reverse=True)
+
     floor = root_total * opts["min_size_ratio"]
     keep, rest = [], []
-    for i, k in enumerate(kids):
+    for i, k in enumerate(folded):
         if i < opts["max_children"] and k["size_actual"] >= floor:
             keep.append(k)
         else:
             rest.append(k)
-    # A lone leftover is not worth an "(other)" bucket.
-    if len(rest) == 1:
+    if len(rest) == 1:  # a lone leftover is not worth an "(other)" bucket
         keep.append(rest.pop())
+
     if rest:
-        keep.append({
-            "name": "(other)",
-            "other": True,
-            "other_dirs": len(rest),
-            "path": frame["path"],  # expanding re-queries the parent path
-            "size_actual": sum(k["size_actual"] for k in rest),
-            "size_apparent": sum(k["size_apparent"] for k in rest),
-            "count": sum(k["count"] for k in rest),
-            "truncated": True,
-            "children": [],
-        })
-        node["truncated"] = True
-    node["children"] = keep
-    return node
+        bucket = {
+            "name": "(other)", "other": True, "other_dirs": len(rest),
+            "path": node.get("path"), "truncated": True, "children": [],
+        }
+        for f in _SUM_FIELDS:
+            bucket[f] = sum(k.get(f, 0) for k in rest)
+        keep.append(bucket)
+        out["truncated"] = True
+
+    out["children"] = keep
+    return out
 
 
-def build_subtree(db_path, path, opts, base_depth):
-    """Stream `duc xml -x` for `path` and return its aggregated node.
+def build_overview(detail_root):
+    """Aggregate the indexer's detail tree into the overview served to the UI.
 
-    `base_depth` is the effective depth of `path` in the overall tree: 1 for a
-    scan root sitting under the synthetic "(scan)" node, 0 for a lazy query
-    whose result is grafted in by the frontend.
+    Each scan root is folded against its own size, so a tiny directory is
+    judged relative to the pool it lives in, not the whole scan.
     """
-    proc = duc.open_duc_xml(db_path, path)
-    stack = []        # open directory frames
-    root_total = [1]  # size of the <duc> element, for the min-size floor
-    result = [None]
-
-    context = ET.iterparse(proc.stdout, events=("start", "end"))
-    for event, elem in context:
-        tag = elem.tag
-        if tag not in ("duc", "ent"):
-            continue
-        is_dir = (tag == "duc") or (elem.get("type") == "dir")
-
-        if event == "start":
-            if not is_dir:
-                continue  # a file <ent> (shouldn't appear with -x) -- ignore
-            depth = base_depth + len(stack)
-            if tag == "duc":
-                name = path
-                node_path = path
-                root_total[0] = max(int(elem.get("size_actual", 1)), 1)
-            else:
-                parent = stack[-1]
-                name = elem.get("name", "")
-                node_path = parent["path"].rstrip("/") + "/" + name
-            stack.append({
-                "name": name, "path": node_path, "attrs": dict(elem.attrib),
-                "kids": [], "depth": depth, "elem": elem,
-            })
-        else:  # end
-            if not is_dir:
-                elem.clear()
-                continue
-            frame = stack.pop()
-            node = _finalize(frame, opts, root_total[0])
-            if stack:
-                stack[-1]["kids"].append(node)
-            else:
-                result[0] = node
-            # Detach the finished element so ElementTree can free it.
-            elem.clear()
-            if stack:
-                try:
-                    stack[-1]["elem"].remove(elem)
-                except Exception:
-                    pass
-
-    duc.finish_duc_xml(proc)
-    if result[0] is None:
-        raise RuntimeError("duc xml produced no <duc> root for %s" % path)
-    return result[0]
+    out = _blank(detail_root)
+    for scan_root in detail_root.get("children") or []:
+        out["children"].append(
+            _aggregate(scan_root, OVERVIEW, 1, scan_root.get("size_actual", 1) or 1)
+        )
+    return out
 
 
-def build_overview(db_path):
-    """Build the synthetic-root overview tree spanning every scanned root."""
-    roots = duc.duc_info(db_path)
-    children = []
-    for r in roots:
-        children.append(build_subtree(db_path, r["path"], OVERVIEW, base_depth=1))
-    return {
-        "name": "(scan)",
-        "path": "",
-        "size_actual": sum(c["size_actual"] for c in children),
-        "size_apparent": sum(c["size_apparent"] for c in children),
-        "count": sum(c["count"] for c in children),
-        "truncated": False,
-        "children": children,
-    }
-
-
-def build_lazy(db_path, path):
-    """Build a shallow, wide subtree for a drill-down request."""
-    return build_subtree(db_path, path, LAZY, base_depth=0)
+def build_lazy(subtree):
+    """Aggregate a drilled-into subtree (shallow + wide) for lazy loading."""
+    return _aggregate(subtree, LAZY, 0, subtree.get("size_actual", 1) or 1)
 
 
 def main(argv):
+    """CLI: aggregate.py <detail-tree.json>  ->  overview on stdout."""
     if len(argv) < 2:
-        sys.stderr.write("usage: aggregate.py <db> [--path <abspath>]\n")
+        sys.stderr.write("usage: aggregate.py <detail-tree.json>\n")
         return 2
-    db_path = argv[1]
-    if len(argv) >= 4 and argv[2] == "--path":
-        node = build_lazy(db_path, argv[3])
-    else:
-        node = build_overview(db_path)
-    json.dump(node, sys.stdout, separators=(",", ":"))
+    with open(argv[1]) as f:
+        detail = json.load(f)
+    json.dump(build_overview(detail), sys.stdout, separators=(",", ":"))
     sys.stdout.write("\n")
     return 0
 

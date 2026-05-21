@@ -1,30 +1,26 @@
-"""Capture per-scan statistics into a `duc-<ts>.stats.json` sidecar.
+"""Freeze per-scan statistics into a `duc-<ts>.stats.json` sidecar.
 
-This is what makes a finished scan's telemetry survive: duc itself keeps no
-scan history and the live progress log is truncated at the next scan, so the
-numbers are frozen here the moment a scan completes.
+Reads the totals written by indexer.py, plus the scan's wall-clock timing and
+the final sampler reading, and writes the stats the dashboard and scan page
+display.
 
-Two modes:
-  * full      python3 scan_stats.py <db> <start_epoch> <end_epoch> <samples>
-              -- called by scan-loop.sh right after a scan; records duration,
-                 I/O totals (from the last sampler reading) and derived rates.
-  * backfill  python3 scan_stats.py <db>
-              -- called for pre-existing databases; duration/I/O are unknown
-                 and emitted as null.
+    python3 scan_stats.py <totals.json> [<start_epoch> <end_epoch> <samples>]
 """
 
 import json
 import os
 import sys
 
-import duc_export as duc
+import duc_export as duc  # human_duration, ts_label
 
 
-def _ts_from_db(db_path):
-    """Extract the snapshot id from a `.../duc-<ts>.db` path."""
-    base = os.path.basename(db_path)
-    if base.startswith("duc-") and base.endswith(".db"):
-        return base[4:-3]
+def _ts_from(path):
+    """Extract the snapshot id from a `.../duc-<ts>.totals.json` path."""
+    base = os.path.basename(path)
+    if base.startswith("duc-"):
+        for suffix in (".totals.json", ".stats.json"):
+            if base.endswith(suffix):
+                return base[4:-len(suffix)]
     return base
 
 
@@ -49,19 +45,16 @@ def _last_sample(samples_path):
         return {}
 
 
-def build_stats(db_path, start=None, end=None, samples_path=None):
-    ts = _ts_from_db(db_path)
-    roots = duc.duc_info(db_path)
+def build_stats(totals_path, start=None, end=None, samples_path=None):
+    ts = _ts_from(totals_path)
+    with open(totals_path) as f:
+        totals = json.load(f)
+    roots = totals.get("roots", [])
+    total = totals.get("total", {})
 
-    total = {
-        "files": sum(r["files"] for r in roots),
-        "dirs": sum(r["dirs"] for r in roots),
-        "size_actual": sum(r["size_actual"] for r in roots),
-        "size_apparent": sum(r["size_apparent"] for r in roots),
-    }
-
+    db_dir = os.path.dirname(os.path.abspath(totals_path))
     try:
-        db_bytes = os.path.getsize(db_path)
+        db_bytes = os.path.getsize(os.path.join(db_dir, "duc-%s.full.json.gz" % ts))
     except OSError:
         db_bytes = None
 
@@ -80,14 +73,14 @@ def build_stats(db_path, start=None, end=None, samples_path=None):
     rates = None
     if duration and duration > 0:
         rates = {
-            "files_per_sec": round(total["files"] / duration, 1),
+            "files_per_sec": round((total.get("files") or 0) / duration, 1),
             "db_growth_kib_s": round(db_bytes / duration / 1024, 1) if db_bytes else None,
         }
 
     return {
         "ts": ts,
         "label": duc.ts_label(ts),
-        "duc_version": duc.duc_version(),
+        "indexer": "built-in inode-aware indexer",
         "start": start,
         "end": end,
         "duration_sec": duration,
@@ -102,9 +95,9 @@ def build_stats(db_path, start=None, end=None, samples_path=None):
 
 def main(argv):
     if len(argv) < 2:
-        sys.stderr.write("usage: scan_stats.py <db> [<start> <end> <samples>]\n")
+        sys.stderr.write("usage: scan_stats.py <totals.json> [<start> <end> <samples>]\n")
         return 2
-    db_path = argv[1]
+    totals_path = argv[1]
     start = end = samples = None
     if len(argv) >= 4:
         try:
@@ -114,8 +107,8 @@ def main(argv):
             start = end = None
     if len(argv) >= 5:
         samples = argv[4]
-    stats = build_stats(db_path, start, end, samples)
-    json.dump(stats, sys.stdout, separators=(",", ":"))
+    json.dump(build_stats(totals_path, start, end, samples), sys.stdout,
+              separators=(",", ":"))
     sys.stdout.write("\n")
     return 0
 

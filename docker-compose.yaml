@@ -13,6 +13,15 @@ services:
       DUC_SCAN_INTERVAL: "86400"
       # Number of snapshots to retain; older ones are pruned automatically.
       DUC_KEEP_SNAPSHOTS: "30"
+      # Optional hardlink attribution. A file with several hard links is
+      # counted once -- under the first directory listed here that contains a
+      # link to it; links elsewhere are reported as free copies. One directory
+      # per line. Leave empty to attribute to the first link encountered.
+      # Example:
+      #   DUC_HARDLINK_PRIORITY: |
+      #     /mnt/ssd-pool/media
+      #     /mnt/hdd-pool/archive
+      DUC_HARDLINK_PRIORITY: ""
     ports:
       - "8000:8000"
     volumes:

@@ -1,83 +1,69 @@
 #!/bin/bash
 # DUC Advanced -- periodic scan loop.
 #
-# Runs `duc index` on a schedule, samples the live process into a JSON-lines
-# log, then freezes per-scan statistics and builds the aggregated directory
-# tree. Everything is configured through environment variables so the scan
-# targets are not baked into the image.
+# Runs the inode-aware indexer on a schedule, samples the live process into a
+# JSON-lines log, then freezes per-scan statistics. All configuration comes
+# from environment variables.
 set -u
 
 LIB="${DUC_LIB_DIR:-/app/lib}"
 DB_DIR="${DUC_DB_DIR:-/var/lib/duc}"
-SCAN_PATHS="${DUC_SCAN_PATHS:-/mnt/hdd-pool /mnt/ssd-pool}"
 INTERVAL="${DUC_SCAN_INTERVAL:-86400}"
 KEEP="${DUC_KEEP_SNAPSHOTS:-30}"
 
 CURRENT_JSON="$DB_DIR/current-scan.json"
 SAMPLES="$DB_DIR/current-scan.samples"
 PROGRESS="$DB_DIR/progress.log"
-INPROGRESS="$DB_DIR/in-progress.db"
 LOG="$DB_DIR/scan-loop.log"
 
 mkdir -p "$DB_DIR"
 
 log() { echo "[$(date -Is)] $*" | tee -a "$LOG" >&2; }
 
-# Write `cmd` output to `dest` atomically; remove the temp file on failure.
-generate() {
-  local dest="$1"; shift
-  if "$@" > "$dest.tmp" 2>>"$LOG"; then
-    mv "$dest.tmp" "$dest"
-  else
-    rm -f "$dest.tmp"
-    return 1
-  fi
-}
-
 run_scan() {
-  local ts start end rc final
+  local ts start end rc
   ts=$(date +%Y-%m-%d_%H-%M)
   start=$(date +%s)
-  rm -f "$INPROGRESS" "$SAMPLES"
+  rm -f "$SAMPLES"
   : > "$PROGRESS"
-  log "scan $ts starting: $SCAN_PATHS"
+  log "scan $ts starting: ${DUC_SCAN_PATHS:-(unset)}"
 
-  # shellcheck disable=SC2086 -- SCAN_PATHS is an intentional word list.
-  stdbuf -o0 -e0 duc index -H -p -d "$INPROGRESS" $SCAN_PATHS > "$PROGRESS" 2>&1 &
-  local duc_pid=$!
+  python3 "$LIB/indexer.py" --ts "$ts" --out "$DB_DIR" --progress "$PROGRESS" \
+    >>"$LOG" 2>&1 &
+  local pid=$!
 
-  printf '{"ts":"%s","start":%s,"pid":%s,"paths":"%s","inprogress_db":"%s"}\n' \
-    "$ts" "$start" "$duc_pid" "$SCAN_PATHS" "$INPROGRESS" > "$CURRENT_JSON"
+  printf '{"ts":"%s","start":%s,"pid":%s,"paths":"%s"}\n' \
+    "$ts" "$start" "$pid" "${DUC_SCAN_PATHS:-}" > "$CURRENT_JSON"
 
-  # Sample /proc until duc exits -- this blocks the loop for the whole scan.
-  python3 "$LIB/sampler.py" "$duc_pid" "$SAMPLES" 8 || true
-  wait "$duc_pid"; rc=$?
+  # Sample /proc until the indexer exits -- this blocks for the whole scan.
+  python3 "$LIB/sampler.py" "$pid" "$SAMPLES" 8 || true
+  wait "$pid"; rc=$?
   end=$(date +%s)
 
-  if [ "$rc" -eq 0 ] && [ -s "$INPROGRESS" ]; then
-    final="$DB_DIR/duc-$ts.db"
-    mv "$INPROGRESS" "$final"
-    log "scan $ts finished in $((end - start))s -> $(basename "$final")"
-    generate "$DB_DIR/duc-$ts.stats.json" \
-      python3 "$LIB/scan_stats.py" "$final" "$start" "$end" "$SAMPLES" \
-      || log "stats generation failed for $ts"
-    generate "$DB_DIR/duc-$ts.tree.json" \
-      python3 "$LIB/aggregate.py" "$final" \
-      || log "tree generation failed for $ts"
+  if [ "$rc" -eq 0 ] && [ -f "$DB_DIR/duc-$ts.tree.json" ]; then
+    log "scan $ts finished in $((end - start))s"
+    if python3 "$LIB/scan_stats.py" "$DB_DIR/duc-$ts.totals.json" \
+         "$start" "$end" "$SAMPLES" > "$DB_DIR/duc-$ts.stats.json.tmp" 2>>"$LOG"; then
+      mv "$DB_DIR/duc-$ts.stats.json.tmp" "$DB_DIR/duc-$ts.stats.json"
+    else
+      rm -f "$DB_DIR/duc-$ts.stats.json.tmp"
+      log "stats generation failed for $ts"
+    fi
   else
-    log "scan $ts failed (rc=$rc) -- keeping previous snapshots"
+    log "scan $ts failed (rc=$rc) -- discarding partial artifacts"
+    rm -f "$DB_DIR/duc-$ts".*
   fi
 
-  rm -f "$CURRENT_JSON" "$SAMPLES" "$INPROGRESS"
+  rm -f "$CURRENT_JSON" "$SAMPLES"
 }
 
 prune() {
-  # Keep the newest $KEEP snapshots; drop older databases and their sidecars.
+  # Keep the newest $KEEP snapshots; drop older ones and their sidecars.
   local old base
-  ls -1t "$DB_DIR"/duc-*.db 2>/dev/null | tail -n +"$((KEEP + 1))" | while read -r old; do
-    base="${old%.db}"
-    rm -f "$old" "$base.stats.json" "$base.tree.json"
-    log "pruned $(basename "$old")"
+  ls -1t "$DB_DIR"/duc-*.tree.json 2>/dev/null | tail -n +"$((KEEP + 1))" | while read -r old; do
+    base="${old%.tree.json}"
+    rm -f "$base".tree.json "$base".full.json.gz "$base".stats.json "$base".totals.json
+    log "pruned $(basename "$base")"
   done
 }
 

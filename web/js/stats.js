@@ -240,7 +240,7 @@
     grid.appendChild(
       section("Scan", [
         row("Timestamp", stats.ts || "—"),
-        row("duc version", stats.duc_version || "—"),
+        row("Indexer", stats.indexer || stats.duc_version || "—"),
         row("Started", U.epochToStr(stats.start)),
         row("Finished", U.epochToStr(stats.end)),
         row(
