@@ -42,10 +42,11 @@
     return r;
   }
 
-  /* Build a titled section wrapping a set of rows / nodes. */
-  function section(title, nodes) {
+  /* Build a titled section wrapping a set of rows / nodes. `cls` is an
+   * optional extra class — used to place the section in the live grid. */
+  function section(title, nodes, cls) {
     var sec = document.createElement("div");
-    sec.className = "tl-section";
+    sec.className = "tl-section" + (cls ? " " + cls : "");
 
     var h = document.createElement("div");
     h.className = "tl-section-head";
@@ -71,6 +72,52 @@
     if (accentVar) fill.style.background = "var(" + accentVar + ")";
     wrap.appendChild(fill);
     return wrap;
+  }
+
+  /* The live "Path" row: segments the current path, dims the parent
+   * directories and highlights the deepest folder, and inserts a <wbr>
+   * break opportunity after every "/" so a long path wraps cleanly at
+   * directory boundaries instead of mid-name. <wbr> elements carry no
+   * width and are not copied to the clipboard, so the path stays a clean
+   * string when selected. */
+  function pathRow(path) {
+    var r = document.createElement("div");
+    r.className = "tl-row tl-row-wrap";
+
+    var k = document.createElement("span");
+    k.className = "tl-key";
+    k.textContent = "Path";
+    r.appendChild(k);
+
+    var v = document.createElement("span");
+    v.className = "tl-val mono tl-path";
+    r.appendChild(v);
+
+    if (!path) {
+      v.textContent = "—";
+      return r;
+    }
+
+    var segs = String(path).split("/");
+    // the leaf is the last non-empty segment (tolerate a trailing slash)
+    var leafIdx = segs.length - 1;
+    while (leafIdx > 0 && segs[leafIdx] === "") leafIdx--;
+
+    for (var i = 0; i <= leafIdx; i++) {
+      if (i === leafIdx) {
+        var leaf = document.createElement("span");
+        leaf.className = "tl-path-leaf";
+        leaf.textContent = segs[i];
+        v.appendChild(leaf);
+      } else {
+        var seg = document.createElement("span");
+        seg.className = "tl-path-seg";
+        seg.textContent = segs[i] + "/";
+        v.appendChild(seg);
+        v.appendChild(document.createElement("wbr"));
+      }
+    }
+    return r;
   }
 
   /* Per-root table shared by both modes. */
@@ -137,7 +184,7 @@
     panel.appendChild(head);
 
     var grid = document.createElement("div");
-    grid.className = "tl-grid";
+    grid.className = "tl-grid tl-grid-live";
 
     /* Process */
     var cpuPct = st.cpu_pct;
@@ -162,49 +209,63 @@
       ),
       row("Process ID", st.pid != null ? String(st.pid) : "—")
     ];
-    grid.appendChild(section("Process", procNodes));
+    grid.appendChild(section("Process", procNodes, "tl-area-process"));
 
     /* Location */
-    var pathRow = row("Path", st.current_path || "—", null, true);
-    pathRow.classList.add("tl-row-wrap");
     grid.appendChild(
-      section("Location", [
-        pathRow,
-        row("Depth", st.depth != null ? String(st.depth) : "—"),
-        row("Roots", st.paths || "—", null, true)
-      ])
+      section(
+        "Location",
+        [
+          pathRow(st.current_path),
+          row("Depth", st.depth != null ? String(st.depth) : "—"),
+          row("Roots", st.paths || "—", null, true)
+        ],
+        "tl-area-location"
+      )
     );
 
     /* Scanned so far */
     grid.appendChild(
-      section("Scanned so far", [
-        row(
-          "Files",
-          st.files_human || (st.files != null ? U.humanCount(st.files) : "—")
-        ),
-        row(
-          "Directories",
-          st.dirs_human || (st.dirs != null ? U.humanCount(st.dirs) : "—")
-        )
-      ])
+      section(
+        "Scanned so far",
+        [
+          row(
+            "Files",
+            st.files_human || (st.files != null ? U.humanCount(st.files) : "—")
+          ),
+          row(
+            "Directories",
+            st.dirs_human || (st.dirs != null ? U.humanCount(st.dirs) : "—")
+          )
+        ],
+        "tl-area-scanned"
+      )
     );
 
     /* Disk I/O */
     grid.appendChild(
-      section("Disk I/O", [
-        row("Read", U.humanBytes(st.read_bytes), null, true),
-        row("Read rate", U.rateMiB(st.read_rate)),
-        row("Written", U.humanBytes(st.write_bytes), null, true),
-        row("Write rate", U.rateMiB(st.write_rate))
-      ])
+      section(
+        "Disk I/O",
+        [
+          row("Read", U.humanBytes(st.read_bytes), null, true),
+          row("Read rate", U.rateMiB(st.read_rate)),
+          row("Written", U.humanBytes(st.write_bytes), null, true),
+          row("Write rate", U.rateMiB(st.write_rate))
+        ],
+        "tl-area-io"
+      )
     );
 
     /* Output database */
     grid.appendChild(
-      section("Output database", [
-        row("Size", U.humanBytes(st.db_bytes), null, true),
-        row("Growth rate", U.rateKiB(st.db_growth_rate))
-      ])
+      section(
+        "Output database",
+        [
+          row("Size", U.humanBytes(st.db_bytes), null, true),
+          row("Growth rate", U.rateKiB(st.db_growth_rate))
+        ],
+        "tl-area-db"
+      )
     );
 
     panel.appendChild(grid);
