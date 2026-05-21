@@ -820,6 +820,17 @@ button {
   border-right: 1px solid var(--border);
   min-width: 0;
 }
+/* SCALE "Full": chart spans the whole row, details panel drops below it */
+.sb-layout.sb-layout-wide {
+  grid-template-columns: 1fr;
+}
+.sb-layout-wide .sb-chart {
+  border-right: none;
+  border-bottom: 1px solid var(--border);
+}
+.sb-layout-wide .sb-details {
+  max-height: none;
+}
 
 /* sunburst control bar — segmented toggles above the chart */
 .sb-toolbar {
@@ -878,6 +889,10 @@ button {
   height: auto;
   display: block;
   transition: max-width 0.2s var(--ease);
+  /* chart text must not be selectable — a text selection would otherwise
+   * paint a highlight box around hidden (opacity 0) outer-ring labels. */
+  user-select: none;
+  -webkit-user-select: none;
 }
 .sb-svg.sb-scale-s { max-width: 430px; }
 .sb-svg.sb-scale-m { max-width: 580px; }

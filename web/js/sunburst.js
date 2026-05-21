@@ -1055,6 +1055,9 @@
         relayout();
       } else if (group === "scale") {
         svg.attr("class", "sb-svg sb-scale-" + value);
+        /* "Full" also collapses the side panel below so the chart gets the
+         * whole row, not just the chart column. */
+        layout.classList.toggle("sb-layout-wide", value === "full");
       }
     });
 
