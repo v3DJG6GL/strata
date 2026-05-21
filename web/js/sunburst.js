@@ -63,14 +63,20 @@
     /* toolbar — segmented view controls */
     var toolbar = el("div", "sb-toolbar");
 
-    function ctlGroup(label, group, items, active, cls) {
+    /* items: [value, label] or [value, label, tooltip]; groupTip is an
+     * optional title on the group label. Tooltip text is author-controlled
+     * static copy (no quotes), so it is inlined into the title attribute. */
+    function ctlGroup(label, group, items, active, cls, groupTip) {
       var html =
         '<div class="sb-ctl' + (cls ? " " + cls : "") + '">' +
-        '<span class="sb-ctl-label">' + label + "</span>" +
+        '<span class="sb-ctl-label"' +
+        (groupTip ? ' title="' + groupTip + '"' : "") + ">" +
+        label + "</span>" +
         '<div class="sb-toggle" role="group">';
       items.forEach(function (it) {
         html +=
           '<button type="button" data-g="' + group + '" data-v="' + it[0] + '"' +
+          (it[2] ? ' title="' + it[2] + '"' : "") +
           (it[0] === active ? ' class="active"' : "") + ">" + it[1] + "</button>";
       });
       return html + "</div></div>";
@@ -78,11 +84,28 @@
 
     toolbar.innerHTML =
       ctlGroup("SIZE", "size",
-        [["size_actual", "Actual"], ["size_apparent", "Apparent"]],
-        "size_actual", "sb-ctl-layout") +
+        [["size_actual", "Actual",
+          "Disk blocks actually allocated (st_blocks x 512) -- the real " +
+          "on-disk footprint. Includes block slack; sparse and compressed " +
+          "files measure smaller than their content."],
+         ["size_apparent", "Apparent",
+          "The file's logical length (st_size), as shown by ls -l. Ignores " +
+          "how blocks are allocated on disk."]],
+        "size_actual", "sb-ctl-layout",
+        "How file size is measured.") +
       ctlGroup("HARD LINKS", "hl",
-        [["dedupe", "Deduped"], ["copies", "+ Copies"], ["exclusive", "Exclusive"]],
-        "dedupe", "sb-ctl-layout") +
+        [["dedupe", "Deduped",
+          "Each inode counted once, charged to its owner directory. Folder " +
+          "totals sum to real disk usage."],
+         ["copies", "+ Copies",
+          "Deduped size plus copy bytes: every extra hard link adds its " +
+          "bytes back in its own folder -- the nominal footprint, as if " +
+          "nothing were shared."],
+         ["exclusive", "Exclusive",
+          "Only bytes whose every hard link lives inside the folder -- what " +
+          "you would actually reclaim by deleting it."]],
+        "dedupe", "sb-ctl-layout",
+        "How files with multiple hard links are counted.") +
       ctlGroup("RINGS", "rings",
         [["2", "2"], ["3", "3"], ["4", "4"], ["5", "5"]], "2") +
       ctlGroup("SCALE", "scale",

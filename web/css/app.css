@@ -851,6 +851,12 @@ button {
   letter-spacing: 0.12em;
   color: var(--dim);
 }
+/* labels and buttons carrying a title= explainer get a help cursor */
+.sb-ctl-label[title] {
+  cursor: help;
+  text-decoration: underline dotted var(--border);
+  text-underline-offset: 3px;
+}
 .sb-toggle {
   display: inline-flex;
   border: 1px solid var(--border);
