@@ -25,6 +25,7 @@
 
   /* Live-scan polling handle for the dashboard. */
   var pollTimer = null;
+  var pollInFlight = false;
   var lastScanning = null;
 
   function header() {
@@ -229,10 +230,14 @@
     return c;
   }
 
-  /* Poll op=status; render the live panel and refresh the list on finish. */
+  /* Poll op=status; render the live panel and refresh the list on finish.
+   * Guarded against in-flight stacking: a slow backend won't accumulate
+   * pending requests every interval tick. */
   function pollStatus() {
     var slot = document.getElementById("live-slot");
     if (!slot) return; // navigated away
+    if (pollInFlight) return;
+    pollInFlight = true;
     apiGet("status")
       .then(function (st) {
         if (!slot.isConnected) return;
@@ -259,6 +264,9 @@
       })
       .catch(function () {
         /* status polling failures are non-fatal; keep the dashboard usable */
+      })
+      .then(function () {
+        pollInFlight = false;
       });
   }
 
@@ -266,6 +274,16 @@
    * SCAN DETAIL                                                            *
    * ====================================================================== */
   var detailState = null; // { ts, sb, focusPath }
+
+  /* Tear down the current scan-detail Sunburst before swapping pages.
+   * Without this the chart's tooltip (attached to <body>), ResizeObserver,
+   * toolbar listener, and pending-fetch map all leak across navigations. */
+  function clearDetail() {
+    if (detailState && detailState.sb && detailState.sb.destroy) {
+      try { detailState.sb.destroy(); } catch (e) { /* defensive */ }
+    }
+    detailState = null;
+  }
 
   function renderScanDetail(ts, focusPath) {
     clearPoll();
@@ -394,7 +412,7 @@
    * ====================================================================== */
   function renderCompare(base, cur) {
     clearPoll();
-    detailState = null;
+    clearDetail();
 
     appEl.innerHTML =
       header() +
@@ -488,26 +506,29 @@
         detailState.sb.focusByPath(r.focusPath || "");
         return;
       }
-      detailState = null;
+      clearDetail();
       renderScanDetail(r.ts, r.focusPath);
     } else if (r.route === "compare") {
       renderCompare(r.base, r.cur);
     } else {
-      detailState = null;
+      clearDetail();
       renderDashboard();
     }
   }
 
   /* Browser back/forward + in-app navigation both flow through hashchange. */
   global.addEventListener("hashchange", route);
-  global.addEventListener("DOMContentLoaded", function () {
-    if (!location.hash) location.hash = "#/";
-    route();
-  });
 
-  /* If the document is already parsed (script at end of body), route now. */
-  if (document.readyState !== "loading") {
+  /* Boot: pick exactly one of DOMContentLoaded vs the immediate path. With
+   * readyState === "interactive" (common when this script runs at end of
+   * body) both would otherwise fire route() and stack two cold-load renders. */
+  function boot() {
     if (!location.hash) location.hash = "#/";
     route();
+  }
+  if (document.readyState === "loading") {
+    global.addEventListener("DOMContentLoaded", boot);
+  } else {
+    boot();
   }
 })(window);
