@@ -213,10 +213,27 @@
     var resizeObs = new ResizeObserver(function () {
       cancelAnimationFrame(roRaf);
       roRaf = requestAnimationFrame(function () {
-        if (root) render();
+        if (root) refitOnResize();
       });
     });
     resizeObs.observe(svg.node());
+
+    /* On a container resize the viewBox is unchanged -- only textK (which
+     * counter-scales label fonts) needs updating. Skip the full render's
+     * data joins / breadcrumb / details rebuild. */
+    function refitOnResize() {
+      measureTextK();
+      gLabels.attr("font-size", labelFontUnits());
+      gLabels
+        .selectAll("text.sb-label")
+        .text(function (d) {
+          return labelFor(d, d.current);
+        })
+        .attr("opacity", function () {
+          return this.textContent ? 1 : 0;
+        });
+      updateCenter();
+    }
 
     /* ---- color --------------------------------------------------------- */
     /* Each top-level directory owns a hue, evenly spaced around the wheel.
@@ -1019,14 +1036,21 @@
       return null;
     }
 
-    /* Find a hierarchy node by data path (first match). */
+    /* Find a hierarchy node by data path (first match). d3's .each visits
+     * every descendant even after a hit; recurse manually so the search
+     * actually short-circuits on large trees. */
     function findHierByPath(path) {
-      var hit = null;
-      root.each(function (d) {
-        if (hit) return;
-        if (d.data && d.data.path === path) hit = d;
-      });
-      return hit;
+      function visit(d) {
+        if (d.data && d.data.path === path) return d;
+        var kids = d.children;
+        if (!kids) return null;
+        for (var i = 0; i < kids.length; i++) {
+          var h = visit(kids[i]);
+          if (h) return h;
+        }
+        return null;
+      }
+      return visit(root);
     }
 
     /* Rebuild hierarchy after a graft, then zoom into the loaded node. */
