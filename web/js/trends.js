@@ -1338,11 +1338,14 @@
   function render(container, snapshots) {
     if (!container) return false;
 
-    /* cheap signature: skip re-render if the snapshot list is unchanged */
+    /* skip re-render if the snapshot list is unchanged. Sample every ts +
+     * total so a re-scan of an existing ts (same key, new bytes) or a
+     * mid-list mutation still busts the cache — the previous "first + last
+     * + length" signature missed those and left the chart stale. */
     var snaps = (snapshots || []).filter(function (s) { return s.ts; });
-    var sig = snaps.length +
-      ":" + (snaps.length ? snaps[snaps.length - 1].ts : "") +
-      ":" + (snaps.length ? snaps[0].ts : "");
+    var sig = snaps.length + "|" + snaps.map(function (s) {
+      return s.ts + "@" + (s.total ? s.total.size_actual : "");
+    }).join(",");
     if (sig === lastSig && container.__trendsData) {
       return true; /* still drawn */
     }
