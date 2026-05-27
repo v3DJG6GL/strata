@@ -145,9 +145,7 @@
       '<div class="snap-card-label">' +
       U.esc(s.label || s.ts) +
       "</div>" +
-      (s.has_tree
-        ? '<span class="badge badge-ok">tree</span>'
-        : '<span class="badge badge-muted">no tree</span>');
+      '<span class="badge badge-ok">tree</span>';
     card.appendChild(head);
 
     /* headline size */

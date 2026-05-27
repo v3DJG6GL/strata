@@ -73,18 +73,23 @@ def find_node(node, path):
     """Locate the node at absolute `path` within a tree, or None.
 
     (other) buckets inherit their parent's path (see aggregate.py); skip them
-    explicitly so the lookup is invariant under children-iteration order."""
-    if not node.get("other") and (node.get("path") or "") == path:
-        return node
-    for c in node.get("children", []):
-        if c.get("other"):
-            continue
-        cp = c.get("path") or ""
-        if cp == path or path.startswith(cp + "/"):
-            hit = find_node(c, path)
-            if hit is not None:
-                return hit
-    return None
+    explicitly so the lookup is invariant under children-iteration order.
+    Iterative so a deeply-nested filesystem won't blow the recursion limit."""
+    cur = node
+    while True:
+        if not cur.get("other") and (cur.get("path") or "") == path:
+            return cur
+        nxt = None
+        for c in cur.get("children", []):
+            if c.get("other"):
+                continue
+            cp = c.get("path") or ""
+            if cp == path or path.startswith(cp + "/"):
+                nxt = c
+                break
+        if nxt is None:
+            return None
+        cur = nxt
 
 
 def get_stats(ts):
@@ -161,7 +166,6 @@ def op_snapshots():
         entry = {
             "ts": ts,
             "label": fmt.ts_label(ts),
-            "has_tree": os.path.exists(os.path.join(DB_DIR, "strata-%s.tree.json" % ts)),
             "db_bytes": None,
             "duration_sec": None,
             "total": None,
