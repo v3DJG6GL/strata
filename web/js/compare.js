@@ -149,6 +149,14 @@
     loadSnapshots(state, function () {
       runCompare(state);
     });
+
+    /* Returned handle lets the router tear down the embedded sunburst
+     * (body-attached tooltip + ResizeObserver) when leaving /compare. */
+    return {
+      destroy: function () {
+        destroySunburstSafe(state);
+      }
+    };
   }
 
   /* ---- snapshot loading + default selection ----------------------------- */

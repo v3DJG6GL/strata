@@ -28,6 +28,10 @@
   var pollInFlight = false;
   var lastScanning = null;
 
+  /* Handle returned by ComparePage.render — used to tear down the embedded
+   * sunburst (body-pinned tooltip + ResizeObserver) when leaving /compare. */
+  var compareHandle = null;
+
   function header() {
     return (
       '<header class="app-header">' +
@@ -53,6 +57,10 @@
    * ====================================================================== */
   function renderDashboard() {
     clearPoll();
+    /* Fresh mount — drop any cross-route scan-state so the first poll tick
+     * after a scan-detail → dashboard return doesn't trip the just-finished
+     * branch (which would fire a redundant loadSnapshots). */
+    lastScanning = null;
     appEl.innerHTML =
       header() +
       '<main class="page page-dashboard">' +
@@ -410,9 +418,17 @@
   /* ====================================================================== *
    * COMPARE                                                                *
    * ====================================================================== */
+  function clearCompare() {
+    if (compareHandle && compareHandle.destroy) {
+      try { compareHandle.destroy(); } catch (e) { /* defensive */ }
+    }
+    compareHandle = null;
+  }
+
   function renderCompare(base, cur) {
     clearPoll();
     clearDetail();
+    clearCompare();
 
     appEl.innerHTML =
       header() +
@@ -434,7 +450,7 @@
       slot.appendChild(errorBox("Comparison module failed to load."));
       return;
     }
-    global.ComparePage.render(slot, {
+    compareHandle = global.ComparePage.render(slot, {
       base: base || "",
       cur: cur || "",
       /* selector changes flow back through the hash so a comparison is
@@ -507,11 +523,13 @@
         return;
       }
       clearDetail();
+      clearCompare();
       renderScanDetail(r.ts, r.focusPath);
     } else if (r.route === "compare") {
       renderCompare(r.base, r.cur);
     } else {
       clearDetail();
+      clearCompare();
       renderDashboard();
     }
   }
@@ -523,7 +541,13 @@
    * readyState === "interactive" (common when this script runs at end of
    * body) both would otherwise fire route() and stack two cold-load renders. */
   function boot() {
-    if (!location.hash) location.hash = "#/";
+    /* Seed the canonical hash without firing hashchange — assigning
+     * location.hash would queue a second route() on top of the sync one. */
+    if (!location.hash && global.history && global.history.replaceState) {
+      global.history.replaceState(null, "", "#/");
+    } else if (!location.hash) {
+      location.hash = "#/";
+    }
     route();
   }
   if (document.readyState === "loading") {
