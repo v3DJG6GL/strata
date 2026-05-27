@@ -130,12 +130,17 @@
     return { kind: "all" };
   }
 
-  /* Returns a filtered copy of `data` honouring state.range; falls back to
-   * the original if the filter would leave < 2 snapshots. Pure. */
+  /* Returns whatever snapshots fall inside state.range — including 0 or 1.
+   * Also returns `window: [from, to]` so the chart can use the requested
+   * window as its x-domain regardless of how many points sit inside it
+   * (otherwise an empty/single-point filter would silently lie about the
+   * range the user asked for). Pure. */
   function applyRange(data) {
-    if (!data || data.dates.length < 2) return data;
+    if (!data || data.dates.length < 2) {
+      return assign({}, data, { window: null });
+    }
     var r = state.range || { kind: "all" };
-    if (r.kind === "all") return data;
+    if (r.kind === "all") return assign({}, data, { window: null });
 
     var now = data.dates[data.dates.length - 1];
     var from, to = now;
@@ -147,34 +152,68 @@
       from = new Date(r.brush[0]);
       to   = new Date(r.brush[1]);
     } else {
-      return data;
+      return assign({}, data, { window: null });
     }
 
-    var i0 = 0, i1 = data.dates.length - 1;
-    while (i0 < i1 && data.dates[i0] < from) i0++;
-    while (i1 > i0 && data.dates[i1] > to)   i1--;
-    if (i1 - i0 < 1) return data; /* < 2 visible points — bail to unfiltered */
+    /* Indices kept in [from, to]. Linear scan is fine — at the snapshot
+     * counts we deal with (≤ a few hundred) bisection adds no value. */
+    var keep = [];
+    for (var i = 0; i < data.dates.length; i++) {
+      if (data.dates[i] >= from && data.dates[i] <= to) keep.push(i);
+    }
 
     return {
-      dates:  data.dates.slice(i0, i1 + 1),
-      labels: data.labels.slice(i0, i1 + 1),
-      ts:     data.ts.slice(i0, i1 + 1),
-      total:  data.total.slice(i0, i1 + 1),
+      dates:  keep.map(function (j) { return data.dates[j]; }),
+      labels: keep.map(function (j) { return data.labels[j]; }),
+      ts:     keep.map(function (j) { return data.ts[j]; }),
+      total:  keep.map(function (j) { return data.total[j]; }),
       roots: data.roots.map(function (rt) {
-        var values = rt.values.slice(i0, i1 + 1);
-        /* the chip's "latest" should reflect the newest visible point */
+        var values = keep.map(function (j) { return rt.values[j]; });
         var lv = null;
-        for (var j = values.length - 1; j >= 0; j--) {
-          if (values[j] != null) { lv = values[j]; break; }
+        for (var k = values.length - 1; k >= 0; k--) {
+          if (values[k] != null) { lv = values[k]; break; }
+        }
+        /* re-anchor firstIdx into the filtered slice; -1 if root hadn't
+         * appeared yet by the time the window opens — UI treats this as
+         * "absent" and renders gaps. */
+        var newFirst = -1;
+        for (var n = 0; n < keep.length; n++) {
+          if (keep[n] >= rt.firstIdx) { newFirst = n; break; }
         }
         return {
           path: rt.path,
           values: values,
           latest: lv != null ? lv : rt.latest,
-          firstIdx: Math.max(0, rt.firstIdx - i0)
+          firstIdx: newFirst < 0 ? values.length : newFirst
         };
-      })
+      }),
+      window: [from, to]
     };
+  }
+
+  /* Span-based time-axis formatter. Returns ONE format applied uniformly
+   * to every tick (Highcharts / Plotly / Grafana convention) instead of
+   * d3's default per-tick multi-scale formatter (which would still render
+   * two same-day snapshots as identical "May 26 / May 26" labels). */
+  function pickTimeFormat(domain) {
+    var span = Math.abs(+domain[1] - +domain[0]);
+    var DAY = 86400000;
+    if (span < 1 * DAY)   return d3.timeFormat("%H:%M");        /* 02:00      */
+    if (span < 7 * DAY)   return d3.timeFormat("%b %d %H:%M");  /* May 26 02:00 */
+    if (span < 365 * DAY) return d3.timeFormat("%b %d");         /* May 26     */
+    return d3.timeFormat("%b %Y");                               /* May 2026   */
+  }
+
+  /* tiny Object.assign shim (kept ES5-friendly to match the file's style) */
+  function assign(target) {
+    for (var i = 1; i < arguments.length; i++) {
+      var src = arguments[i];
+      if (!src) continue;
+      for (var k in src) {
+        if (Object.prototype.hasOwnProperty.call(src, k)) target[k] = src[k];
+      }
+    }
+    return target;
   }
 
   /* ---------- data shaping --------------------------------------------- */
@@ -496,11 +535,32 @@
   function drawMain(container, data) {
     var slot = container.querySelector("#trend-main");
     slot.querySelectorAll("svg").forEach(function (n) { n.remove(); });
+    /* any prior empty-state overlay */
+    var prevEmpty = slot.querySelector(".trend-empty");
+    if (prevEmpty) prevEmpty.remove();
 
     var iw = W - m.left - m.right,
         ih = H_MAIN - m.top - m.bottom;
 
-    var x = d3.scaleTime().domain(d3.extent(data.dates)).range([0, iw]);
+    /* If the filter has reported its window, anchor x to that window — so
+     * the axis reflects what the user asked for even when fewer than 2
+     * snapshots fall inside it. Otherwise fall back to the data extent. */
+    var xDomain = data.window || d3.extent(data.dates);
+    if (!xDomain || xDomain[0] == null || xDomain[1] == null) {
+      /* nothing usable — shouldn't normally happen */
+      xDomain = [new Date(Date.now() - 86400000), new Date()];
+    }
+    var x = d3.scaleTime().domain(xDomain).range([0, iw]);
+
+    /* Sparse-filter branches — honest behaviour, never silently extend. */
+    if (data.dates.length === 0) {
+      drawEmpty(slot, container, x, iw, ih, "No snapshots in this range.");
+      return;
+    }
+    if (data.dates.length === 1) {
+      drawSinglePoint(slot, container, data, x, iw, ih);
+      return;
+    }
 
     var visible = data.roots.filter(function (r) {
       return state.hiddenRoots.indexOf(r.path) < 0;
@@ -584,14 +644,16 @@
         .attr("y1", ih).attr("y2", ih);
     }
 
-    /* x labels */
-    var xticks = x.ticks(Math.min(6, data.dates.length));
+    /* x labels — span-based format keeps adjacent ticks distinguishable
+     * even when two snapshots are on the same calendar day. */
+    var xFmt = pickTimeFormat(x.domain());
+    var xticks = x.ticks(Math.min(6, Math.max(2, data.dates.length)));
     g.selectAll("text.trend-xlab").data(xticks).enter().append("text")
       .attr("class", "trend-xlab")
       .attr("x", function (d) { return x(d); })
       .attr("y", ih + 21)
       .attr("text-anchor", "middle")
-      .text(d3.timeFormat("%b %d"));
+      .text(xFmt);
 
     /* ---- view-specific drawing ---- */
     if (state.viewMode === "total") {
@@ -623,6 +685,144 @@
         deltaSvg.style.setProperty("--trend-k", dw > 0 ? String(W / dw) : "1");
       }
     });
+    resizeObs.observe(svg.node());
+  }
+
+  /* ---- sparse-filter render modes -------------------------------------- *
+   * Both modes render the full chart frame (gridlines + x-axis using the
+   * filter's window) so the user sees the range they asked for. The
+   * "widen" CTA is rendered into the snap-count label (see updateSnapCount).
+   * --------------------------------------------------------------------- */
+
+  function drawEmpty(slot, container, x, iw, ih, message) {
+    var svg = d3.select(slot).append("svg")
+      .attr("class", "trend-svg")
+      .attr("viewBox", [0, 0, W, H_MAIN])
+      .attr("preserveAspectRatio", "xMidYMid meet");
+    var g = svg.append("g")
+      .attr("transform", "translate(" + m.left + "," + m.top + ")");
+
+    /* x labels (windowed) */
+    var xFmt = pickTimeFormat(x.domain());
+    var xticks = x.ticks(6);
+    g.selectAll("text.trend-xlab").data(xticks).enter().append("text")
+      .attr("class", "trend-xlab")
+      .attr("x", function (d) { return x(d); })
+      .attr("y", ih + 21)
+      .attr("text-anchor", "middle")
+      .text(xFmt);
+
+    /* a single thin baseline so the chart frame is visible */
+    g.append("line").attr("class", "trend-grid")
+      .attr("x1", 0).attr("x2", iw)
+      .attr("y1", ih).attr("y2", ih);
+
+    /* centered "no snapshots" caption */
+    var caption = document.createElement("div");
+    caption.className = "trend-empty";
+    caption.textContent = message;
+    slot.appendChild(caption);
+
+    /* counter-scale (consistent with the full chart) */
+    fitTextOn(svg);
+  }
+
+  function drawSinglePoint(slot, container, data, x, iw, ih) {
+    var visible = data.roots.filter(function (r) {
+      return state.hiddenRoots.indexOf(r.path) < 0;
+    });
+
+    /* y domain: pick the relevant value(s) for the current view mode and
+     * centre them so the dot doesn't get pinned to an axis edge. */
+    var values;
+    if (state.viewMode === "total") {
+      values = [data.total[0]];
+    } else if (state.viewMode === "stacked") {
+      /* stacked of a single point is meaningless — render as a per-root dot
+       * cluster (same as Lines mode) so the user still sees the values. */
+      values = visible
+        .map(function (r) { return r.values[0]; })
+        .filter(function (v) { return v != null; });
+    } else {
+      values = visible
+        .map(function (r) { return r.values[0]; })
+        .filter(function (v) { return v != null; });
+    }
+    if (!values.length) values = [0];
+
+    var lo = d3.min(values), hi = d3.max(values);
+    var pad = Math.max((hi - lo) * 0.4, hi * 0.08, 1);
+    var domain = state.yMode === "zero"
+      ? [0, (hi || 1) * 1.12]
+      : [Math.max(0, lo - pad), hi + pad];
+    var y = d3.scaleLinear().domain(domain).nice(5).range([ih, 0]);
+
+    var svg = d3.select(slot).append("svg")
+      .attr("class", "trend-svg")
+      .attr("viewBox", [0, 0, W, H_MAIN])
+      .attr("preserveAspectRatio", "xMidYMid meet");
+    var g = svg.append("g")
+      .attr("transform", "translate(" + m.left + "," + m.top + ")");
+
+    /* gridlines + y labels (adaptive precision, same as the normal path) */
+    var yticks = y.ticks(5);
+    var yStep = yticks.length > 1 ? yticks[1] - yticks[0] : (yticks[0] || 1);
+    var yRef  = yticks.length
+      ? Math.max.apply(null, yticks.map(function (d) { return Math.abs(d); }))
+      : 1;
+    g.selectAll("line.trend-grid").data(yticks).enter().append("line")
+      .attr("class", "trend-grid")
+      .attr("x1", 0).attr("x2", iw)
+      .attr("y1", function (d) { return y(d); })
+      .attr("y2", function (d) { return y(d); });
+    g.selectAll("text.trend-ylab").data(yticks).enter().append("text")
+      .attr("class", "trend-ylab")
+      .attr("x", -12)
+      .attr("y", function (d) { return y(d); })
+      .attr("dy", "0.32em")
+      .attr("text-anchor", "end")
+      .text(function (d) { return U.humanBytesAtStep(d, yStep, yRef); });
+
+    /* x labels (windowed) */
+    var xFmt = pickTimeFormat(x.domain());
+    var xticks = x.ticks(6);
+    g.selectAll("text.trend-xlab").data(xticks).enter().append("text")
+      .attr("class", "trend-xlab")
+      .attr("x", function (d) { return x(d); })
+      .attr("y", ih + 21)
+      .attr("text-anchor", "middle")
+      .text(xFmt);
+
+    /* draw the dot(s) at the single timestamp */
+    var d0 = data.dates[0];
+    if (state.viewMode === "total") {
+      var v = data.total[0];
+      g.append("circle").attr("class", "trend-pt")
+        .attr("cx", x(d0)).attr("cy", y(v)).attr("r", 5);
+    } else {
+      visible.forEach(function (r) {
+        var v = r.values[0];
+        if (v == null) return;
+        g.append("circle").attr("class", "trend-pt-multi")
+          .attr("cx", x(d0)).attr("cy", y(v)).attr("r", 4.5)
+          .attr("fill", assignColor(r.path));
+      });
+    }
+
+    fitTextOn(svg);
+  }
+
+  /* Counter-scale axis labels so they keep their pixel size regardless of
+   * the rendered SVG width — extracted from drawMain so the sparse modes
+   * can reuse it. */
+  function fitTextOn(svg) {
+    function fit() {
+      var w = svg.node().getBoundingClientRect().width;
+      svg.node().style.setProperty("--trend-k", w > 0 ? String(W / w) : "1");
+    }
+    fit();
+    if (resizeObs) resizeObs.disconnect();
+    resizeObs = new ResizeObserver(fit);
     resizeObs.observe(svg.node());
   }
 
@@ -990,6 +1190,17 @@
     var slot = container.querySelector("#trend-delta-slot");
     slot.innerHTML = "";
     var baseLabel = container.querySelector("#trend-delta-base");
+    var deltaSec  = container.querySelector("#trend-delta");
+
+    /* Δ requires ≥ 2 points to compute "since baseline" — hide the whole
+     * sub-panel under sparse filters; the snap-count CTA tells the user
+     * how to widen if they care. */
+    if (!data || data.dates.length < 2) {
+      if (deltaSec) deltaSec.hidden = true;
+      if (baseLabel) baseLabel.textContent = "";
+      return;
+    }
+    if (deltaSec) deltaSec.hidden = false;
 
     /* what series to delta against: total if in total mode, else the sum of
      * currently visible roots. */
@@ -1007,9 +1218,16 @@
     var base = series[0];
     var deltas = series.map(function (v) { return v - base; });
 
+    /* baseline label — use the same span-based format as the x-axis so a
+     * sub-daily window shows time (since the day is unambiguous from the
+     * header), and a multi-day window shows date. */
+    var baselineFmt = pickTimeFormat([
+      data.dates[0],
+      data.dates[data.dates.length - 1]
+    ]);
     baseLabel.textContent =
       "baseline " + U.humanBytes(base) + " · " +
-      d3.timeFormat("%b %d")(data.dates[0]);
+      baselineFmt(data.dates[0]);
 
     var iw = W - m.left - m.right,
         ih = H_DELTA - m.top - m.bottom;
@@ -1056,13 +1274,14 @@
         return (d > 0 ? "+" : "−") + U.humanBytesAtStep(Math.abs(d), dyStep, dyRef);
       });
 
-    var xticks = x.ticks(Math.min(6, data.dates.length));
+    var xFmt = pickTimeFormat(x.domain());
+    var xticks = x.ticks(Math.min(6, Math.max(2, data.dates.length)));
     g.selectAll("text.trend-xlab").data(xticks).enter().append("text")
       .attr("class", "trend-xlab")
       .attr("x", function (d) { return x(d); })
       .attr("y", ih + 21)
       .attr("text-anchor", "middle")
-      .text(d3.timeFormat("%b %d"));
+      .text(xFmt);
 
     /* clip rects to split positive (green) from negative (red) areas */
     var defs = svg.append("defs");
@@ -1162,13 +1381,39 @@
   function updateSnapCount(container, raw, filtered) {
     var el = container.querySelector("#trend-snap-count");
     if (!el) return;
-    if (filtered.dates.length === raw.dates.length) {
-      el.textContent = raw.dates.length + " snapshots";
-      el.classList.remove("is-active");
-    } else {
-      el.textContent =
-        filtered.dates.length + " of " + raw.dates.length + " snapshots";
-      el.classList.add("is-active");
+    el.classList.remove("is-active", "is-warn");
+    /* clear any previously-installed CTA listener; safe even if absent */
+    var oldCta = el.querySelector(".trend-snap-cta");
+    if (oldCta) oldCta.remove();
+
+    var fLen = filtered.dates.length;
+    var rLen = raw.dates.length;
+
+    if (fLen === rLen) {
+      el.textContent = rLen + " snapshots";
+      return;
+    }
+
+    /* sparse / empty — show the count + a one-click "widen" CTA. The link
+     * jumps to the 7d preset; if that's still too narrow the user can pick
+     * something else from the chips. */
+    el.textContent = fLen + " of " + rLen + " in range";
+    el.classList.add(fLen < 2 ? "is-warn" : "is-active");
+    if (fLen < 2) {
+      var sep = document.createTextNode(" · ");
+      el.appendChild(sep);
+      var a = document.createElement("a");
+      a.href = "#";
+      a.className = "trend-snap-cta";
+      a.textContent = "Show last 7d →";
+      a.addEventListener("click", function (e) {
+        e.preventDefault();
+        state.range = { kind: "preset", preset: "7d" };
+        saveState();
+        syncRangeControls(container);
+        drawAll(container);
+      });
+      el.appendChild(a);
     }
   }
 

@@ -2285,6 +2285,38 @@ button {
 .trend-snap-count.is-active {
   color: var(--accent);
 }
+.trend-snap-count.is-warn {
+  color: var(--yellow);
+}
+.trend-snap-cta {
+  color: var(--accent);
+  text-decoration: none;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.02em;
+  transition: color 0.14s;
+  margin-left: 2px;
+}
+.trend-snap-cta:hover,
+.trend-snap-cta:focus-visible {
+  color: var(--text-bright);
+  text-decoration: underline;
+}
+
+/* sparse-filter overlay caption — centred in the plot area, above the
+ * partial chart frame (axis labels + baseline gridline). */
+.trend-empty {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -55%);
+  color: var(--dim);
+  font-family: var(--sans);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+  text-align: center;
+  pointer-events: none;
+}
 
 /* "Last [N] [d|w|m|y]" custom range input */
 .trend-custom {
