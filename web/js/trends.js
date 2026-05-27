@@ -142,7 +142,7 @@
       return Object.assign({}, data, { window: null });
     }
     var r = state.range || { kind: "all" };
-    if (r.kind === "all") return assign({}, data, { window: null });
+    if (r.kind === "all") return Object.assign({}, data, { window: null });
 
     var now = data.dates[data.dates.length - 1];
     var from, to = now;
