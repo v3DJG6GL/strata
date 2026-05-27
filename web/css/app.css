@@ -372,11 +372,6 @@ button {
   color: var(--green);
   border: 1px solid rgba(63, 185, 80, 0.3);
 }
-.badge-muted {
-  background: rgba(139, 148, 158, 0.12);
-  color: var(--dim);
-  border: 1px solid var(--border);
-}
 .snap-card-hero {
   display: flex;
   align-items: baseline;
