@@ -1326,15 +1326,9 @@ button {
   color: var(--dim);
 }
 
-/* page-load staggered reveal — mirrors the dashboard's cardIn */
+/* page-load staggered reveal — reuses the dashboard's cardIn keyframe */
 .cmp-reveal {
-  animation: cmpReveal 0.45s var(--ease) both;
-}
-@keyframes cmpReveal {
-  from {
-    opacity: 0;
-    transform: translateY(12px);
-  }
+  animation: cardIn 0.45s var(--ease) both;
 }
 
 /* ---- loading skeleton -------------------------------------------------- */
