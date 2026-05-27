@@ -90,13 +90,11 @@ def get_stats(ts):
             return json.load(f)
     except (OSError, ValueError):
         pass
-    stats = scan_stats.build_stats(artifact(ts, ".totals.json"))
-    try:  # best-effort cache; harmless if the volume is read-only
-        with open(sidecar, "w") as f:
-            json.dump(stats, f, separators=(",", ":"))
-    except OSError:
-        pass
-    return stats
+    # Rebuild best-effort. Without start/end/samples we cannot recover
+    # duration / io / rates, so we serve the partial record but DON'T cache
+    # it -- otherwise a one-time absent sidecar locks the snapshot into a
+    # permanently-incomplete state.
+    return scan_stats.build_stats(artifact(ts, ".totals.json"))
 
 
 def humansize_count(text):
