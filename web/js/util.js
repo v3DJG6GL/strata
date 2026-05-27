@@ -5,11 +5,12 @@
 (function (global) {
   "use strict";
 
-  /* Human-readable byte sizes: binary (1024), 2 decimal places.
-   * Examples: 2.00T, 245.50G, 10.20M, 4.00K, 512
+  /* Human-readable byte sizes: binary (1024), 1 decimal place.
+   * Examples: 2.0T, 245.5G, 10.2M, 4.0K, 512
    * Bytes below 1K are shown as a bare integer (no suffix, no decimal).
-   * Two decimals (was one) so storage values at the TB scale carry
-   * meaningful precision side-by-side (91.04T vs 91.21T, not 91.0T vs 91.2T). */
+   * For axis ticks or other places where two adjacent values must stay
+   * distinguishable at the same suffix (e.g. 91.04T vs 91.21T), use
+   * `humanBytesAtStep` — it derives the decimals from the tick step. */
   function humanBytes(n) {
     if (n == null || isNaN(n)) return "—";
     n = Number(n);
@@ -21,7 +22,7 @@
       n /= 1024;
       i++;
     } while (n >= 1024 && i < units.length - 1);
-    return n.toFixed(2) + units[i];
+    return n.toFixed(1) + units[i];
   }
 
   /* Adaptive byte formatter for axis tick labels or other collision-prone
