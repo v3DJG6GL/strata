@@ -141,20 +141,8 @@
       thresholdMax: 1 // slider ceiling, set after data loads
     };
 
-    /* Tear down a prior chart instance (its tooltip lives on document.body). */
-    function destroySunburst() {
-      if (state.sb && typeof state.sb.destroy === "function") {
-        try {
-          state.sb.destroy();
-        } catch (e) {
-          /* ignore */
-        }
-      }
-      state.sb = null;
-    }
-
     containerEl.innerHTML = "";
-    destroySunburst();
+    destroySunburstSafe(state);
     containerEl.appendChild(spinner("Loading snapshots…"));
 
     /* Step 1 — fetch the snapshot list, pick defaults, then fetch the diff. */
@@ -866,7 +854,11 @@
 
     rows.push({ k: "Δ " + m.sub, v: signedStr(delta, m.fmt) });
     rows.push({ k: "Δ%", v: deltaPctStr(delta, baseVal) });
-    rows.push({ k: "Δ items", v: signedStr(num(d.d_count), U.commaCount) });
+    /* Skip "Δ items" when the active metric IS count — it would just repeat
+     * the row above with the same label and number. */
+    if (!m.isCount) {
+      rows.push({ k: "Δ items", v: signedStr(num(d.d_count), U.commaCount) });
+    }
     return rows;
   }
 
