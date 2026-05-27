@@ -24,23 +24,33 @@ def _ts_from(path):
     return base
 
 
+def tail_lines(path, n=1, bufsize=8192):
+    """Return the last `n` non-blank lines of `path` (cheap seek-to-end tail).
+
+    For a long-running scan the samples file grows into the megabytes; reading
+    it whole just to take the final line is wasteful when callers poll. Falls
+    back to a full read if the file is smaller than the buffer."""
+    if not path:
+        return []
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            f.seek(max(0, size - bufsize))
+            tail = f.read().decode("utf-8", "replace")
+    except OSError:
+        return []
+    lines = [ln.strip() for ln in tail.splitlines() if ln.strip()]
+    return lines[-n:] if n else lines
+
+
 def _last_sample(samples_path):
     """Return the final sampler reading, or {} if unavailable."""
-    if not samples_path or not os.path.exists(samples_path):
-        return {}
-    last = ""
-    try:
-        with open(samples_path) as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    last = line
-    except OSError:
-        return {}
-    if not last:
+    rows = tail_lines(samples_path, 1)
+    if not rows:
         return {}
     try:
-        return json.loads(last)
+        return json.loads(rows[0])
     except ValueError:
         return {}
 

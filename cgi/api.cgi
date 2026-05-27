@@ -138,13 +138,8 @@ def parse_progress():
 
 def tail_samples(n=2):
     """Return the last `n` sampler readings as parsed dicts."""
-    try:
-        with open(SAMPLES) as f:
-            lines = [ln for ln in f.read().splitlines() if ln.strip()]
-    except OSError:
-        return []
     out = []
-    for ln in lines[-n:]:
+    for ln in scan_stats.tail_lines(SAMPLES, n):
         try:
             out.append(json.loads(ln))
         except ValueError:
