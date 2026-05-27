@@ -668,20 +668,21 @@
 
     /* counter-scale axis labels so they stay at their px size regardless of
      * the rendered chart width (the viewBox would otherwise magnify them). */
+    function fitSvg(node, viewBoxW) {
+      var w = node.getBoundingClientRect().width;
+      node.style.setProperty("--trend-k", w > 0 ? String(viewBoxW / w) : "1");
+    }
     function fitText() {
-      var w = svg.node().getBoundingClientRect().width;
-      svg.node().style.setProperty("--trend-k", w > 0 ? String(W / w) : "1");
+      fitSvg(svg.node(), W);
+      /* Initialize the delta svg in the same tick — drawDelta has no
+       * ResizeObserver of its own, so without this its labels render at
+       * the viewBox scale until the first resize event fires. */
+      var deltaSvg = container.querySelector("#trend-delta-slot svg");
+      if (deltaSvg) fitSvg(deltaSvg, W);
     }
     fitText();
     if (resizeObs) resizeObs.disconnect();
-    resizeObs = new ResizeObserver(function () {
-      fitText();
-      var deltaSvg = container.querySelector("#trend-delta-slot svg");
-      if (deltaSvg) {
-        var dw = deltaSvg.getBoundingClientRect().width;
-        deltaSvg.style.setProperty("--trend-k", dw > 0 ? String(W / dw) : "1");
-      }
-    });
+    resizeObs = new ResizeObserver(fitText);
     resizeObs.observe(svg.node());
   }
 
@@ -719,9 +720,7 @@
 
   /* ---- total view: one accent line + clickable dots ---- */
   function drawTotal(g, data, x, y, iw, ih, container) {
-    /* hoist the numeric date array once per draw — bisectCenter would
-     * otherwise rebuild it on every pointermove. */
-    var dateMs = data.dates.map(function (d) { return +d; });
+    var dateMs = data.dateMs;
     var pts = data.dates.map(function (d, i) {
       return { date: d, size: data.total[i], i: i };
     });
@@ -848,7 +847,7 @@
       .attr("y1", 0).attr("y2", ih).style("display", "none");
     var marks = g.append("g").attr("class", "trend-marks");
     var tip = container.querySelector("#trend-tip");
-    var dateMs = data.dates.map(function (d) { return +d; });
+    var dateMs = data.dateMs;
 
     container.__hoverFn = function (mx, event) {
       var i = d3.bisectCenter(dateMs, +x.invert(mx));
@@ -921,7 +920,7 @@
 
   function attachBrush(g, data, x, iw, ih, container) {
     var brushG = g.append("g").attr("class", "trend-brush");
-    var dateMs = data.dates.map(function (d) { return +d; });
+    var dateMs = data.dateMs;
 
     /* selection rect — drawn during drag, hidden otherwise */
     var sel = brushG.append("rect")
@@ -1293,6 +1292,10 @@
     var raw = container.__trendsData;
     if (!raw) return;
     var data = applyRange(raw);
+    /* dateMs is consumed by bisectCenter in drawTotal / crosshair / attachBrush
+     * / drawDelta -- cache the numeric coercion once per draw rather than
+     * rebuilding the array in each closure. */
+    data.dateMs = data.dates.map(function (d) { return +d; });
     updateSnapCount(container, raw, data);
     drawMain(container, data);
     drawLegend(container, data);
