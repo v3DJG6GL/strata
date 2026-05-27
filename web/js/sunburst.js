@@ -320,24 +320,29 @@
       return e;
     }
 
+    /* Resolve the size/exclusive/copy fields a `data` node carries for the
+     * current Size + Hard-link mode. Centralises the apparent/actual ternary
+     * that nodeSize and showTip would otherwise both rewrite. */
+    function sizeFields(data) {
+      var ap = sizeKey === "size_apparent";
+      return {
+        base: Number(
+          (ap ? data.size_apparent : data.size_actual) || data.size_actual || 0
+        ),
+        ex: ap ? data.exclusive_apparent : data.exclusive_actual,
+        cp: ap ? data.copy_apparent : data.copy_actual
+      };
+    }
+
     /* The size value used for layout, honoring the size-type and hard-link
      * view toggles. Falls back gracefully for trees without the newer
      * exclusive/copy fields. */
     function nodeSize(data) {
       if (!data) return 0;
-      var ap = sizeKey === "size_apparent";
-      var base = Number(
-        (ap ? data.size_apparent : data.size_actual) || data.size_actual || 0
-      );
-      if (hlMode === "exclusive") {
-        var ex = ap ? data.exclusive_apparent : data.exclusive_actual;
-        return ex != null ? Number(ex) : base;
-      }
-      if (hlMode === "copies") {
-        var cp = ap ? data.copy_apparent : data.copy_actual;
-        return base + (cp != null ? Number(cp) : 0);
-      }
-      return base;
+      var f = sizeFields(data);
+      if (hlMode === "exclusive") return f.ex != null ? Number(f.ex) : f.base;
+      if (hlMode === "copies") return f.base + (f.cp != null ? Number(f.cp) : 0);
+      return f.base;
     }
 
     /* Does this data node have real, expandable children present? */
@@ -856,23 +861,18 @@
           )
         );
         /* hard-link breakdown, shown only when this subtree has any */
-        var apK = sizeKey === "size_apparent";
-        var dedup = Number(
-          (apK ? data.size_apparent : data.size_actual) || data.size_actual || 0
-        );
-        var exV = apK ? data.exclusive_apparent : data.exclusive_actual;
-        var cpV = apK ? data.copy_apparent : data.copy_actual;
-        if (exV != null && Number(exV) < dedup) {
+        var f = sizeFields(data);
+        if (f.ex != null && Number(f.ex) < f.base) {
           rows.push(
             tipRow(
               "Exclusive",
-              U.humanBytes(Number(exV)) +
-                "  ·  shared " + U.humanBytes(dedup - Number(exV))
+              U.humanBytes(Number(f.ex)) +
+                "  ·  shared " + U.humanBytes(f.base - Number(f.ex))
             )
           );
         }
-        if (cpV) {
-          rows.push(tipRow("Hard-link copies", U.humanBytes(Number(cpV))));
+        if (f.cp) {
+          rows.push(tipRow("Hard-link copies", U.humanBytes(Number(f.cp))));
         }
       }
 
@@ -1055,23 +1055,7 @@
 
     /* Rebuild hierarchy after a graft, then zoom into the loaded node. */
     function rebuildPreservingFocus(loadedPath) {
-      var prevFocusPath = focusNode ? focusNode.data.path : "";
-      root = buildHierarchy();
-
-      /* restore focus to where the user was */
-      focusNode =
-        findHierByPath(prevFocusPath) || root;
-      project(focusNode);
-      root.each(function (d) {
-        d.current = d.target;
-      });
-
-      /* now animate a zoom INTO the just-loaded node, if found */
-      var target = findHierByPath(loadedPath);
-      render();
-      if (target && target !== focusNode) {
-        zoomTo(target);
-      }
+      buildAndSnap(focusNode ? focusNode.data.path : "", loadedPath);
     }
 
     /* ---- spinner -------------------------------------------------------- */
@@ -1155,14 +1139,7 @@
       subtreeCache = {};
       pendingFetch = {};
       totalSize = nodeSize(rawRoot) || 1;
-
-      root = buildHierarchy();
-      focusNode = root;
-      project(root);
-      root.each(function (d) {
-        d.current = d.target;
-      });
-      render();
+      buildAndSnap(null, null); // null focus path → reset to root
     }
 
     /* Drive focus from the URL. `path` "" → scan root. If the path lies
@@ -1199,14 +1176,24 @@
     /* ---- toolbar controls ---------------------------------------------- */
     /* Rebuild the hierarchy and re-render, keeping the user's focus. */
     function relayout() {
-      var prevFocus = focusNode ? focusNode.data.path : "";
+      buildAndSnap(focusNode ? focusNode.data.path : "", null);
+    }
+
+    /* Shared build+project+snap+render pipeline used by setData, relayout,
+     * and rebuildPreservingFocus. Sets focusNode from `focusPath` (null → root),
+     * then optionally zooms to `zoomPath` (the node that just got grafted in). */
+    function buildAndSnap(focusPath, zoomPath) {
       root = buildHierarchy();
-      focusNode = findHierByPath(prevFocus) || root;
+      focusNode = (focusPath != null && findHierByPath(focusPath)) || root;
       project(focusNode);
       root.each(function (d) {
         d.current = d.target;
       });
       render();
+      if (zoomPath) {
+        var target = findHierByPath(zoomPath);
+        if (target && target !== focusNode) zoomTo(target);
+      }
     }
 
     /* Recompute geometry for a new ring count. */
