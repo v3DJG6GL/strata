@@ -272,22 +272,12 @@
   }
 
   /* ======================================================================= *
-   * SHELL — header + crumbtrail + body slot                                 *
+   * SHELL — body slot                                                       *
+   * app.js owns the crumbtrail + page title (rendered as siblings of the    *
+   * mount point); we just own the body container.                           *
    * ======================================================================= */
   function renderShell(state) {
     state.container.innerHTML = "";
-
-    var nav = el("nav", "crumbtrail");
-    nav.innerHTML =
-      '<a href="#/" class="crumbtrail-link">Dashboard</a>' +
-      '<span class="crumbtrail-sep">/</span>' +
-      '<span class="crumbtrail-here">Compare scans</span>';
-    state.container.appendChild(nav);
-
-    var title = el("h1", "scan-title");
-    title.innerHTML = "Scan <span class=\"mono\">comparison</span>";
-    state.container.appendChild(title);
-
     var body = el("div");
     body.id = "cmp-body";
     state.container.appendChild(body);
