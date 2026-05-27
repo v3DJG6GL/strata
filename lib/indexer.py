@@ -189,9 +189,13 @@ def _resolve_hardlinks(hardlinks, priority, copies):
     for sa, sk, links in hardlinks.values():
         # canonical = the best-tier link; ties keep walk order (first seen).
         if ranked:
+            # dir_path walks up to the root, so compute once per link rather
+            # than once per min(key=) comparison (matters for inodes with many
+            # links, e.g. backup-style snapshot trees).
+            paths = [dir_path(d) for d in links]
             best = min(
                 range(len(links)),
-                key=lambda i: link_tier(dir_path(links[i]), priority, copies) + (i,),
+                key=lambda i: link_tier(paths[i], priority, copies) + (i,),
             )
             canonical = links[best]
         else:
