@@ -381,15 +381,15 @@
     /* --- baseline / current dropdowns --- */
     var pickRow = el("div", "cmp-pickrow");
 
-    var baseField = buildSelectField(
-      state,
-      "Baseline",
-      state.base,
-      function (ts) {
+    var baseField = buildSelectField(state, {
+      label: "Baseline",
+      role: "base",
+      selectedTs: state.base,
+      onChange: function (ts) {
         state.base = ts;
         commitSelection(state);
       }
-    );
+    });
     pickRow.appendChild(baseField);
 
     /* arrow between the two selects */
@@ -398,9 +398,14 @@
     arrow.setAttribute("aria-hidden", "true");
     pickRow.appendChild(arrow);
 
-    var curField = buildSelectField(state, "Current", state.cur, function (ts) {
-      state.cur = ts;
-      commitSelection(state);
+    var curField = buildSelectField(state, {
+      label: "Current",
+      role: "cur",
+      selectedTs: state.cur,
+      onChange: function (ts) {
+        state.cur = ts;
+        commitSelection(state);
+      }
     });
     pickRow.appendChild(curField);
 
@@ -455,14 +460,14 @@
   /* A labelled <select> populated with every snapshot. The option whose
    * choice would be invalid (baseline newer-or-equal than current, or current
    * older-or-equal than baseline) is disabled so the user cannot pick it. */
-  function buildSelectField(state, label, selectedTs, onChange) {
+  function buildSelectField(state, opts) {
     var field = el("label", "cmp-field");
     var cap = el("span", "cmp-field-label");
-    cap.textContent = label;
+    cap.textContent = opts.label;
     field.appendChild(cap);
 
     var sel = el("select", "cmp-select mono");
-    var isBaseline = label === "Baseline";
+    var isBaseline = opts.role === "base";
     var otherTs = isBaseline ? state.cur : state.base;
     var otherIdx = indexOfTs(state, otherTs);
 
@@ -473,7 +478,7 @@
         ? "  ·  " + U.humanBytes(s.total.size_actual)
         : "";
       opt.textContent = (s.label || s.ts) + sizeHint;
-      if (s.ts === selectedTs) opt.selected = true;
+      if (s.ts === opts.selectedTs) opt.selected = true;
       /* Disable picks that would invert the timeline (newest-first list). */
       if (otherIdx >= 0) {
         if (isBaseline && idx <= otherIdx) opt.disabled = true; // not older
@@ -483,7 +488,7 @@
     });
 
     sel.addEventListener("change", function () {
-      onChange(sel.value);
+      opts.onChange(sel.value);
     });
     field.appendChild(sel);
     return field;
@@ -1174,7 +1179,9 @@
       /* no base for this metric → percent is undefined; rank by magnitude. */
       return self === 0 ? 0 : self > 0 ? 1e-9 : -1e-9;
     }
-    if (was === 0) return self > 0 ? Infinity : 0;
+    /* was===0 means a new directory; sentinel ranks it above any finite %
+     * without producing NaN under Infinity-Infinity in a sort comparator. */
+    if (was === 0) return self > 0 ? 1e12 : self < 0 ? -1e12 : 0;
     return (self / was) * 100;
   }
 
