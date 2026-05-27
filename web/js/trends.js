@@ -1,9 +1,20 @@
 /* ==========================================================================
- * trends.js — "storage over time" line chart for the dashboard
+ * trends.js — "storage over time" panel for the dashboard
  *
- *   Trends.render(containerEl, snapshots)  // snapshots = op=snapshots list
- *   -> draws a total-size timeline; returns true if a chart was drawn
- *      (needs >= 2 dated snapshots), false otherwise. Dots link to the scan.
+ *   Trends.render(containerEl, snapshots)   // snapshots = op=snapshots list
+ *   -> draws the panel; returns true if drawn (needs >= 2 dated snapshots),
+ *      false otherwise. Idempotent re-renders on the same container are cheap.
+ *
+ * Panel contents:
+ *   - Section controls (injected into the container's section-head-right):
+ *       [ Auto-fit | Zero ]   [ Total | Lines | Stacked ]
+ *   - Main chart    — total / per-root lines / stacked area
+ *   - Chip legend   — one chip per root, click to toggle (lines/stacked only)
+ *   - Δ panel       — change-since-first, signed area with green/red fills
+ *
+ * State (mode + visibility + per-root palette) persists in localStorage under
+ * `strata.trends.v1`. The data flattener is pure; rendering is full-redraw on
+ * any state change — cheap for the snapshot counts we deal with.
  *
  * Depends on: d3 (v7 global), Util.
  * ======================================================================== */
@@ -13,8 +24,69 @@
   var d3 = global.d3;
   var U = global.Util;
 
-  /* ResizeObserver from the last render (disconnected on the next render). */
+  var LS_KEY = "strata.trends.v1";
+
+  /* d3.schemeTableau10 with the brand accent (#58a6ff) reserved for the
+   * total overlay. The 5th slot of Tableau10 ("#59a14f", green) is replaced
+   * with a teal to avoid colliding with the delta-panel positive-fill green
+   * (--green = #3fb950). The accent-blue Tableau slot ("#4e79a7") is kept,
+   * since it is dark enough to not be confused with our brand accent. */
+  var PALETTE = [
+    "#e15759", /* red       */
+    "#f28e2b", /* orange    */
+    "#76b7b2", /* teal      */
+    "#4e79a7", /* dark blue */
+    "#edc948", /* yellow    */
+    "#b07aa1", /* purple    */
+    "#ff9da7", /* pink      */
+    "#9c755f", /* brown     */
+    "#bab0ac", /* warm grey */
+    "#59a14f"  /* green — last because it overlaps the delta panel */
+  ];
+  var ACCENT = "#58a6ff";
+
+  /* Module-level state — survives re-renders on the same dashboard view. */
   var resizeObs = null;
+  var lastSig = null;          /* short hash of the snapshots we last drew */
+  var state = null;            /* loaded lazily on first render            */
+
+  /* ---------- state persistence ---------------------------------------- */
+
+  function loadState() {
+    var s;
+    try {
+      s = JSON.parse(global.localStorage.getItem(LS_KEY)) || {};
+    } catch (_) {
+      s = {};
+    }
+    return {
+      yMode: s.yMode === "zero" ? "zero" : "auto",
+      viewMode:
+        s.viewMode === "lines" || s.viewMode === "stacked"
+          ? s.viewMode
+          : "total",
+      hiddenRoots: Array.isArray(s.hiddenRoots) ? s.hiddenRoots.slice() : [],
+      colors: s.colors && typeof s.colors === "object" ? s.colors : {}
+    };
+  }
+
+  function saveState() {
+    try {
+      global.localStorage.setItem(
+        LS_KEY,
+        JSON.stringify({
+          yMode: state.yMode,
+          viewMode: state.viewMode,
+          hiddenRoots: state.hiddenRoots,
+          colors: state.colors
+        })
+      );
+    } catch (_) {
+      /* private mode / quota — non-fatal */
+    }
+  }
+
+  /* ---------- data shaping --------------------------------------------- */
 
   /* "2026-05-20_22-37" -> Date, or null if unparseable. */
   function tsToDate(ts) {
@@ -24,183 +96,776 @@
     return isNaN(d.getTime()) ? null : d;
   }
 
-  function render(container, snapshots) {
-    if (!container) return false;
-    container.innerHTML = "";
-
-    /* keep dated snapshots with a known total size, oldest -> newest */
-    var pts = (snapshots || [])
+  /* Build series from the raw snapshot list. Output:
+   *   {
+   *     dates:  [Date, ...],
+   *     labels: [String, ...],
+   *     ts:     [String, ...],        // for #/scan/<ts> linking
+   *     total:  [Number, ...],
+   *     roots:  [ {path, values:[Number|null], latest:Number, firstIdx:Int}, ... ]
+   *   }
+   * The roots[] array is sorted by latest size, descending. */
+  function flatten(snapshots) {
+    var rows = (snapshots || [])
       .map(function (s) {
         return {
           ts: s.ts,
           label: s.label || s.ts,
           date: tsToDate(s.ts),
-          size: s.total ? Number(s.total.size_actual) : null
+          total: s.total ? Number(s.total.size_actual) : null,
+          roots: Array.isArray(s.roots) ? s.roots : []
         };
       })
-      .filter(function (p) {
-        return p.date && p.size != null && !isNaN(p.size);
+      .filter(function (r) {
+        return r.date && r.total != null && !isNaN(r.total);
       })
       .sort(function (a, b) {
         return a.date - b.date;
       });
 
-    if (pts.length < 2) return false; // not enough history to plot
+    if (rows.length < 2) return null;
 
-    var W = 960,
-      H = 240,
-      m = { top: 18, right: 22, bottom: 30, left: 72 },
-      iw = W - m.left - m.right,
-      ih = H - m.top - m.bottom;
+    var dates = [], labels = [], ts = [], total = [];
+    var byRoot = {};               /* path -> {values, latest, firstIdx} */
+    rows.forEach(function (r, i) {
+      dates.push(r.date);
+      labels.push(r.label);
+      ts.push(r.ts);
+      total.push(r.total);
+      r.roots.forEach(function (root) {
+        var p = root.path;
+        if (!p) return;
+        var v = Number(root.size_actual);
+        if (isNaN(v)) return;
+        if (!byRoot[p]) {
+          byRoot[p] = { values: [], latest: 0, firstIdx: i };
+          /* pad missing prefix with nulls */
+          while (byRoot[p].values.length < i) byRoot[p].values.push(null);
+        }
+        byRoot[p].values.push(v);
+        byRoot[p].latest = v;
+      });
+      /* pad any root not seen this snapshot with null */
+      Object.keys(byRoot).forEach(function (p) {
+        while (byRoot[p].values.length < i + 1) byRoot[p].values.push(null);
+      });
+    });
 
-    var x = d3
-      .scaleTime()
-      .domain(d3.extent(pts, function (p) { return p.date; }))
-      .range([0, iw]);
-    var maxV = d3.max(pts, function (p) { return p.size; }) || 1;
-    var y = d3.scaleLinear().domain([0, maxV * 1.12]).nice().range([ih, 0]);
+    var roots = Object.keys(byRoot)
+      .map(function (p) {
+        return {
+          path: p,
+          values: byRoot[p].values,
+          latest: byRoot[p].latest,
+          firstIdx: byRoot[p].firstIdx
+        };
+      })
+      .sort(function (a, b) { return b.latest - a.latest; });
 
-    var svg = d3
-      .select(container)
-      .append("svg")
+    return { dates: dates, labels: labels, ts: ts, total: total, roots: roots };
+  }
+
+  /* Stable palette assignment: a root keeps its colour across sessions.
+   * Persisted in state.colors. New roots take the next free slot; once all
+   * are used, cycle modulo PALETTE.length. */
+  function assignColor(path) {
+    if (state.colors[path] != null) return PALETTE[state.colors[path] % PALETTE.length];
+    var used = {};
+    Object.keys(state.colors).forEach(function (k) {
+      used[state.colors[k]] = true;
+    });
+    var i = 0;
+    while (used[i] && i < PALETTE.length) i++;
+    if (i >= PALETTE.length) {
+      /* all taken; pick the lowest-numbered slot (modular cycle) */
+      i = Object.keys(state.colors).length % PALETTE.length;
+    }
+    state.colors[path] = i;
+    saveState();
+    return PALETTE[i];
+  }
+
+  /* ---------- DOM scaffold --------------------------------------------- */
+
+  function buildScaffold(container) {
+    container.innerHTML = "";
+    container.style.position = "relative";
+
+    /* segmented controls live in the section-head; the rest below. */
+    var headSlot = document.querySelector("#trend-controls");
+    if (headSlot) {
+      headSlot.innerHTML = "";
+      headSlot.appendChild(seg("trend-yseg", [
+        { v: "auto", label: "Auto-fit", hint: "y-axis zooms to data range" },
+        { v: "zero", label: "Zero",     hint: "y-axis anchored at 0" }
+      ], state.yMode, function (v) {
+        state.yMode = v;
+        saveState();
+        drawAll(container);
+      }));
+      headSlot.appendChild(seg("trend-vseg", [
+        { v: "total",   label: "Total",   hint: "single aggregate line" },
+        { v: "lines",   label: "Lines",   hint: "one line per root directory" },
+        { v: "stacked", label: "Stacked", hint: "stacked area by root" }
+      ], state.viewMode, function (v) {
+        state.viewMode = v;
+        saveState();
+        drawAll(container);
+      }));
+    }
+
+    /* main chart slot */
+    var main = document.createElement("div");
+    main.className = "trend-main";
+    main.id = "trend-main";
+    container.appendChild(main);
+
+    /* zoom-mode pill (positioned absolutely inside .trend-main) */
+    var pill = document.createElement("div");
+    pill.className = "trend-pill";
+    pill.id = "trend-pill";
+    pill.hidden = true;
+    main.appendChild(pill);
+
+    /* shared cursor-following tooltip for both charts */
+    var tip = document.createElement("div");
+    tip.className = "trend-tip";
+    tip.id = "trend-tip";
+    tip.style.display = "none";
+    container.appendChild(tip);
+
+    /* chip legend */
+    var legend = document.createElement("div");
+    legend.className = "trend-legend";
+    legend.id = "trend-legend";
+    container.appendChild(legend);
+
+    /* delta panel */
+    var deltaSec = document.createElement("div");
+    deltaSec.className = "trend-delta";
+    deltaSec.id = "trend-delta";
+    deltaSec.innerHTML =
+      '<div class="trend-delta-head">' +
+      '  <span class="trend-delta-title">Change since first scan</span>' +
+      '  <span class="trend-delta-base mono" id="trend-delta-base"></span>' +
+      "</div>" +
+      '<div class="trend-delta-slot" id="trend-delta-slot"></div>';
+    container.appendChild(deltaSec);
+  }
+
+  /* Build a small segmented control. opts = [{v, label, hint}, ...] */
+  function seg(cls, opts, active, onPick) {
+    var wrap = document.createElement("div");
+    wrap.className = "trend-seg " + cls;
+    wrap.setAttribute("role", "tablist");
+    opts.forEach(function (o) {
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "trend-seg-btn" + (o.v === active ? " is-active" : "");
+      b.setAttribute("role", "tab");
+      b.setAttribute("aria-selected", o.v === active ? "true" : "false");
+      b.setAttribute("title", o.hint);
+      b.dataset.value = o.v;
+      b.textContent = o.label;
+      b.addEventListener("click", function () { onPick(o.v); });
+      b.addEventListener("keydown", function (e) {
+        if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+        e.preventDefault();
+        var btns = Array.prototype.slice.call(wrap.children);
+        var i = btns.indexOf(b);
+        var j = (i + (e.key === "ArrowRight" ? 1 : -1) + btns.length) % btns.length;
+        btns[j].focus();
+        btns[j].click();
+      });
+      wrap.appendChild(b);
+    });
+    return wrap;
+  }
+
+  /* ---------- main chart ----------------------------------------------- */
+
+  /* Shared layout for both SVGs so date columns line up. */
+  var W = 960,
+      m = { top: 18, right: 22, bottom: 30, left: 72 };
+  var H_MAIN = 240, H_DELTA = 130;
+
+  function drawMain(container, data) {
+    var slot = container.querySelector("#trend-main");
+    /* preserve the pill node across re-renders */
+    var pill = slot.querySelector("#trend-pill");
+    slot.querySelectorAll("svg").forEach(function (n) { n.remove(); });
+    pill.hidden = true;
+
+    var iw = W - m.left - m.right,
+        ih = H_MAIN - m.top - m.bottom;
+
+    var x = d3.scaleTime().domain(d3.extent(data.dates)).range([0, iw]);
+
+    var visible = data.roots.filter(function (r) {
+      return state.hiddenRoots.indexOf(r.path) < 0;
+    });
+
+    /* y domain depends on mode + view */
+    var domain;
+    if (state.viewMode === "stacked") {
+      var sumPerIdx = data.dates.map(function (_, i) {
+        return visible.reduce(function (s, r) {
+          return s + (r.values[i] || 0);
+        }, 0);
+      });
+      var hiS = d3.max(sumPerIdx) || 1;
+      domain = [0, hiS * 1.08];
+    } else {
+      var pool = state.viewMode === "total"
+        ? data.total
+        : visible.reduce(function (acc, r) {
+            r.values.forEach(function (v) { if (v != null) acc.push(v); });
+            return acc;
+          }, []);
+      if (!pool.length) pool = [0];
+      var lo = d3.min(pool), hi = d3.max(pool);
+      if (state.yMode === "zero") {
+        domain = [0, (hi || 1) * 1.12];
+      } else {
+        var span = hi - lo;
+        var pad = Math.max(span * 0.08, hi * 0.005);
+        if (span === 0) pad = Math.max(hi * 0.001, 1);
+        domain = [Math.max(0, lo - pad), hi + pad];
+      }
+    }
+    var y = d3.scaleLinear().domain(domain).nice().range([ih, 0]);
+
+    var svg = d3.select(slot).append("svg")
       .attr("class", "trend-svg")
-      .attr("viewBox", [0, 0, W, H])
+      .attr("viewBox", [0, 0, W, H_MAIN])
       .attr("preserveAspectRatio", "xMidYMid meet");
-    var g = svg
-      .append("g")
-      .attr("transform", "translate(" + m.left + "," + m.top + ")");
+    var g = svg.append("g").attr("transform", "translate(" + m.left + "," + m.top + ")");
 
-    /* y gridlines + size labels */
+    /* gridlines */
     var yticks = y.ticks(4);
-    g.selectAll("line.trend-grid")
-      .data(yticks)
-      .enter()
-      .append("line")
+    g.selectAll("line.trend-grid").data(yticks).enter().append("line")
       .attr("class", "trend-grid")
-      .attr("x1", 0)
-      .attr("x2", iw)
+      .attr("x1", 0).attr("x2", iw)
       .attr("y1", function (d) { return y(d); })
       .attr("y2", function (d) { return y(d); });
-    g.selectAll("text.trend-ylab")
-      .data(yticks)
-      .enter()
-      .append("text")
-      .attr("class", "trend-ylab")
+
+    /* y labels — anchor the lowest one when zoomed */
+    var loDom = domain[0];
+    g.selectAll("text.trend-ylab").data(yticks).enter().append("text")
+      .attr("class", function (d) {
+        return "trend-ylab" + (state.yMode === "auto" && state.viewMode !== "stacked" && d === yticks[0] ? " trend-ylab--anchor" : "");
+      })
       .attr("x", -12)
       .attr("y", function (d) { return y(d); })
       .attr("dy", "0.32em")
       .attr("text-anchor", "end")
       .text(function (d) { return U.humanBytes(d); });
 
-    /* x date labels */
-    var xticks = x.ticks(Math.min(6, pts.length));
-    var fmt = d3.timeFormat("%b %d");
-    g.selectAll("text.trend-xlab")
-      .data(xticks)
-      .enter()
-      .append("text")
+    /* dashed baseline marker when the axis is non-zero */
+    if (state.yMode === "auto" && state.viewMode !== "stacked" && loDom > 0) {
+      g.append("line").attr("class", "trend-baseline")
+        .attr("x1", 0).attr("x2", iw)
+        .attr("y1", ih).attr("y2", ih);
+    }
+
+    /* x labels */
+    var xticks = x.ticks(Math.min(6, data.dates.length));
+    g.selectAll("text.trend-xlab").data(xticks).enter().append("text")
       .attr("class", "trend-xlab")
       .attr("x", function (d) { return x(d); })
       .attr("y", ih + 21)
       .attr("text-anchor", "middle")
-      .text(fmt);
+      .text(d3.timeFormat("%b %d"));
 
-    /* area + line */
-    var area = d3
-      .area()
-      .x(function (p) { return x(p.date); })
-      .y0(ih)
-      .y1(function (p) { return y(p.size); })
-      .curve(d3.curveMonotoneX);
-    var line = d3
-      .line()
-      .x(function (p) { return x(p.date); })
-      .y(function (p) { return y(p.size); })
-      .curve(d3.curveMonotoneX);
-    g.append("path").datum(pts).attr("class", "trend-area").attr("d", area);
-    g.append("path").datum(pts).attr("class", "trend-line").attr("d", line);
-
-    /* cursor-following tooltip */
-    var tip = document.createElement("div");
-    tip.className = "trend-tip";
-    tip.style.display = "none";
-    container.style.position = "relative";
-    container.appendChild(tip);
-
-    /* dots — clickable, link to that scan */
-    var dots = g
-      .selectAll("g.trend-dot")
-      .data(pts)
-      .enter()
-      .append("g")
-      .attr("class", "trend-dot")
-      .attr("transform", function (p) {
-        return "translate(" + x(p.date) + "," + y(p.size) + ")";
-      })
-      .style("cursor", "pointer")
-      .attr("tabindex", 0)
-      .attr("role", "link")
-      .attr("aria-label", function (p) {
-        return p.label + " — " + U.humanBytes(p.size);
-      });
-    dots.append("circle").attr("class", "trend-hit").attr("r", 15);
-    dots.append("circle").attr("class", "trend-pt").attr("r", 4);
-
-    function go(p) {
-      global.location.hash = "#/scan/" + encodeURIComponent(p.ts);
+    /* ---- view-specific drawing ---- */
+    if (state.viewMode === "total") {
+      drawTotal(g, data, x, y, iw, ih, container);
+    } else if (state.viewMode === "lines") {
+      drawLines(g, data, visible, x, y, iw, ih, container);
+    } else {
+      drawStacked(g, data, visible, x, y, iw, ih, container);
     }
-    dots.on("click", function (e, p) { go(p); });
-    dots.on("keydown", function (e, p) {
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        go(p);
-      }
-    });
 
-    dots
-      .on("mouseenter focus", function (e, p) {
-        var i = pts.indexOf(p);
-        var delta = i > 0 ? p.size - pts[i - 1].size : null;
-        var dHtml =
-          delta == null || delta === 0
-            ? ""
-            : ' <span class="trend-tip-d ' +
-              (delta > 0 ? "up" : "down") +
-              '">' +
-              (delta > 0 ? "▲ " : "▼ ") +
-              U.esc(U.humanBytes(Math.abs(delta))) +
-              "</span>";
-        tip.innerHTML =
-          '<div class="trend-tip-lab">' + U.esc(p.label) + "</div>" +
-          '<div class="trend-tip-val mono">' +
-          U.esc(U.humanBytes(p.size)) +
-          dHtml +
-          "</div>";
-        tip.style.display = "block";
-      })
-      .on("mousemove", function (e) {
-        var r = container.getBoundingClientRect();
-        var tx = e.clientX - r.left + 16;
-        var ty = e.clientY - r.top + 16;
-        if (tx + 210 > r.width) tx = e.clientX - r.left - 210;
-        tip.style.left = Math.max(4, tx) + "px";
-        tip.style.top = ty + "px";
-      })
-      .on("mouseleave blur", function () {
-        tip.style.display = "none";
-      });
+    /* zoom pill — show range when y-axis is non-zero */
+    if (state.yMode === "auto" && state.viewMode !== "stacked") {
+      var poolForPill = state.viewMode === "total"
+        ? data.total
+        : (function () {
+            var arr = [];
+            visible.forEach(function (r) {
+              r.values.forEach(function (v) { if (v != null) arr.push(v); });
+            });
+            return arr.length ? arr : [0];
+          })();
+      var lo2 = d3.min(poolForPill), hi2 = d3.max(poolForPill);
+      pill.textContent = U.humanBytes(lo2) + " – " + U.humanBytes(hi2);
+      pill.hidden = false;
+    }
 
-    /* counter-scale axis-label text so it stays a constant pixel size: the
-     * fixed viewBox would otherwise magnify it with the chart. */
+    /* counter-scale axis labels so they stay at their px size regardless of
+     * the rendered chart width (the viewBox would otherwise magnify them). */
     function fitText() {
       var w = svg.node().getBoundingClientRect().width;
       svg.node().style.setProperty("--trend-k", w > 0 ? String(W / w) : "1");
     }
     fitText();
     if (resizeObs) resizeObs.disconnect();
-    resizeObs = new ResizeObserver(fitText);
+    resizeObs = new ResizeObserver(function () {
+      fitText();
+      var deltaSvg = container.querySelector("#trend-delta-slot svg");
+      if (deltaSvg) {
+        var dw = deltaSvg.getBoundingClientRect().width;
+        deltaSvg.style.setProperty("--trend-k", dw > 0 ? String(W / dw) : "1");
+      }
+    });
     resizeObs.observe(svg.node());
+  }
 
+  /* ---- total view: one accent line + clickable dots ---- */
+  function drawTotal(g, data, x, y, iw, ih, container) {
+    var pts = data.dates.map(function (d, i) {
+      return { date: d, size: data.total[i], i: i };
+    });
+
+    g.append("path").datum(pts).attr("class", "trend-area")
+      .attr("d", d3.area()
+        .x(function (p) { return x(p.date); })
+        .y0(ih)
+        .y1(function (p) { return y(p.size); })
+        .curve(d3.curveMonotoneX));
+
+    g.append("path").datum(pts).attr("class", "trend-line")
+      .attr("d", d3.line()
+        .x(function (p) { return x(p.date); })
+        .y(function (p) { return y(p.size); })
+        .curve(d3.curveMonotoneX));
+
+    var dots = g.selectAll("g.trend-dot").data(pts).enter().append("g")
+      .attr("class", "trend-dot")
+      .attr("transform", function (p) { return "translate(" + x(p.date) + "," + y(p.size) + ")"; })
+      .style("cursor", "pointer")
+      .attr("tabindex", 0)
+      .attr("role", "link")
+      .attr("aria-label", function (p) {
+        return data.labels[p.i] + " — " + U.humanBytes(p.size) + ". Open scan.";
+      });
+    dots.append("circle").attr("class", "trend-hit").attr("r", 15);
+    dots.append("circle").attr("class", "trend-pt").attr("r", 4);
+
+    function go(p) { global.location.hash = "#/scan/" + encodeURIComponent(data.ts[p.i]); }
+    dots.on("click", function (e, p) { go(p); });
+    dots.on("keydown", function (e, p) {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(p); }
+    });
+
+    /* tooltip: cursor-following, with delta-to-previous */
+    var tip = container.querySelector("#trend-tip");
+    dots.on("mouseenter focus", function (e, p) {
+      var prev = p.i > 0 ? data.total[p.i - 1] : null;
+      var dHtml = "";
+      if (prev != null) {
+        var d = p.size - prev;
+        if (d !== 0) {
+          dHtml = ' <span class="trend-tip-d ' + (d > 0 ? "up" : "down") + '">' +
+            (d > 0 ? "▲ " : "▼ ") + U.esc(U.humanBytes(Math.abs(d))) + "</span>";
+        }
+      }
+      tip.innerHTML =
+        '<div class="trend-tip-lab">' + U.esc(data.labels[p.i]) + "</div>" +
+        '<div class="trend-tip-val mono">' + U.esc(U.humanBytes(p.size)) + dHtml + "</div>" +
+        '<div class="trend-tip-hint">click to open scan</div>';
+      tip.style.display = "block";
+    })
+    .on("mousemove", function (e) { positionTip(container, tip, e); })
+    .on("mouseleave blur", function () { tip.style.display = "none"; });
+  }
+
+  /* ---- lines view: per-root + faint total overlay + crosshair ---- */
+  function drawLines(g, data, visible, x, y, iw, ih, container) {
+    var line = d3.line()
+      .defined(function (d) { return d.v != null; })
+      .x(function (d) { return x(d.date); })
+      .y(function (d) { return y(d.v); })
+      .curve(d3.curveMonotoneX);
+
+    /* faint total overlay (dashed, dim) so users always see the aggregate */
+    var totalPts = data.dates.map(function (d, i) { return { date: d, v: data.total[i] }; });
+    g.append("path").datum(totalPts).attr("class", "trend-total-ghost").attr("d", line);
+
+    /* per-root series */
+    var series = g.append("g").attr("class", "trend-series-g");
+    visible.forEach(function (r) {
+      var pts = data.dates.map(function (d, i) { return { date: d, v: r.values[i] }; });
+      series.append("path")
+        .datum(pts)
+        .attr("class", "trend-series")
+        .attr("data-path", r.path)
+        .attr("stroke", assignColor(r.path))
+        .attr("d", line);
+    });
+
+    /* crosshair overlay + per-series circles, populated on pointermove */
+    crosshair(g, data, visible, x, y, iw, ih, container, false);
+  }
+
+  /* ---- stacked area view ---- */
+  function drawStacked(g, data, visible, x, y, iw, ih, container) {
+    /* Build wide-format rows for d3.stack. Missing values -> 0 (stack math
+     * requires real numbers; the legend chip still shows the root as visible). */
+    var keys = visible.map(function (r) { return r.path; });
+    var rows = data.dates.map(function (d, i) {
+      var obj = { _date: d };
+      visible.forEach(function (r) { obj[r.path] = r.values[i] || 0; });
+      return obj;
+    });
+    var stacked = d3.stack().keys(keys).order(d3.stackOrderInsideOut)(rows);
+
+    var areaGen = d3.area()
+      .x(function (d) { return x(d.data._date); })
+      .y0(function (d) { return y(d[0]); })
+      .y1(function (d) { return y(d[1]); })
+      .curve(d3.curveMonotoneX);
+
+    g.selectAll("path.trend-layer").data(stacked).enter().append("path")
+      .attr("class", "trend-layer")
+      .attr("data-path", function (s) { return s.key; })
+      .attr("fill", function (s) { return assignColor(s.key); })
+      .attr("d", areaGen);
+
+    crosshair(g, data, visible, x, y, iw, ih, container, true);
+  }
+
+  /* ---- crosshair shared by lines + stacked ---- */
+  function crosshair(g, data, visible, x, y, iw, ih, container, isStacked) {
+    var rule = g.append("line").attr("class", "trend-crosshair")
+      .attr("y1", 0).attr("y2", ih).style("display", "none");
+    var marks = g.append("g").attr("class", "trend-marks");
+
+    var tip = container.querySelector("#trend-tip");
+
+    g.append("rect").attr("class", "trend-hot")
+      .attr("width", iw).attr("height", ih)
+      .style("fill", "none").style("pointer-events", "all")
+      .on("pointerenter", function () { rule.style("display", null); })
+      .on("pointerleave", function () {
+        rule.style("display", "none");
+        marks.selectAll("*").remove();
+        tip.style.display = "none";
+      })
+      .on("pointermove", function (event) {
+        var mx = d3.pointer(event)[0];
+        var i = d3.bisectCenter(
+          data.dates.map(function (d) { return +d; }),
+          +x.invert(mx)
+        );
+        rule.attr("x1", x(data.dates[i])).attr("x2", x(data.dates[i]));
+
+        /* mark dots at hovered x */
+        var hits = visible
+          .map(function (r) { return { path: r.path, v: r.values[i] }; })
+          .filter(function (h) { return h.v != null; })
+          .sort(function (a, b) { return b.v - a.v; });
+
+        marks.selectAll("*").remove();
+        if (!isStacked) {
+          hits.forEach(function (h) {
+            marks.append("circle")
+              .attr("class", "trend-pt-multi")
+              .attr("r", 3.5)
+              .attr("cx", x(data.dates[i]))
+              .attr("cy", y(h.v))
+              .attr("fill", assignColor(h.path));
+          });
+        }
+
+        /* tooltip listing visible series + total */
+        var rowsHtml = hits.slice(0, 8).map(function (h) {
+          return '<div class="trend-tip-row">' +
+            '<span class="trend-tip-sw" style="background:' + assignColor(h.path) + '"></span>' +
+            '<span class="trend-tip-path">' + U.esc(U.shortPath(h.path, 32)) + '</span>' +
+            '<span class="trend-tip-sz mono">' + U.esc(U.humanBytes(h.v)) + '</span>' +
+            '</div>';
+        }).join("");
+        var sumVisible = hits.reduce(function (s, h) { return s + h.v; }, 0);
+        tip.innerHTML =
+          '<div class="trend-tip-lab">' + U.esc(data.labels[i]) + "</div>" +
+          rowsHtml +
+          '<div class="trend-tip-row trend-tip-sum">' +
+            '<span class="trend-tip-sw" style="background:transparent;border:1px solid var(--accent)"></span>' +
+            '<span class="trend-tip-path">' + (isStacked ? "Stack total" : "Visible total") + '</span>' +
+            '<span class="trend-tip-sz mono">' + U.esc(U.humanBytes(sumVisible)) + '</span>' +
+          '</div>';
+        tip.style.display = "block";
+        positionTip(container, tip, event);
+      })
+      .on("click", function (event) {
+        var mx = d3.pointer(event)[0];
+        var i = d3.bisectCenter(
+          data.dates.map(function (d) { return +d; }),
+          +x.invert(mx)
+        );
+        global.location.hash = "#/scan/" + encodeURIComponent(data.ts[i]);
+      });
+  }
+
+  function positionTip(container, tip, e) {
+    var r = container.getBoundingClientRect();
+    var tx = e.clientX - r.left + 16;
+    var ty = e.clientY - r.top + 16;
+    var tw = tip.offsetWidth || 240;
+    if (tx + tw + 8 > r.width) tx = e.clientX - r.left - tw - 8;
+    tip.style.left = Math.max(4, tx) + "px";
+    tip.style.top = Math.max(4, ty) + "px";
+  }
+
+  /* ---------- chip legend ---------------------------------------------- */
+
+  function drawLegend(container, data) {
+    var leg = container.querySelector("#trend-legend");
+    leg.innerHTML = "";
+    if (state.viewMode === "total") {
+      leg.hidden = true;
+      return;
+    }
+    leg.hidden = false;
+
+    data.roots.forEach(function (r) {
+      var hidden = state.hiddenRoots.indexOf(r.path) >= 0;
+      var chip = document.createElement("button");
+      chip.type = "button";
+      chip.className = "trend-chip" + (hidden ? " is-hidden" : "");
+      chip.setAttribute("aria-pressed", hidden ? "false" : "true");
+      chip.title = r.path;
+      chip.innerHTML =
+        '<span class="trend-chip-dot" style="background:' + assignColor(r.path) + '"></span>' +
+        '<span class="trend-chip-path">' + U.esc(U.shortPath(r.path, 36)) + '</span>' +
+        '<span class="trend-chip-size mono">' + U.esc(U.humanBytes(r.latest)) + '</span>';
+      chip.addEventListener("click", function () {
+        var idx = state.hiddenRoots.indexOf(r.path);
+        if (idx >= 0) state.hiddenRoots.splice(idx, 1);
+        else state.hiddenRoots.push(r.path);
+        saveState();
+        drawAll(container);
+      });
+      chip.addEventListener("mouseenter", function () {
+        if (state.viewMode === "lines") {
+          container.querySelectorAll(".trend-series").forEach(function (n) {
+            n.classList.toggle("is-dim", n.dataset.path !== r.path);
+          });
+        } else if (state.viewMode === "stacked") {
+          container.querySelectorAll(".trend-layer").forEach(function (n) {
+            n.classList.toggle("is-dim", n.dataset.path !== r.path);
+          });
+        }
+      });
+      chip.addEventListener("mouseleave", function () {
+        container.querySelectorAll(".trend-series, .trend-layer").forEach(function (n) {
+          n.classList.remove("is-dim");
+        });
+      });
+      leg.appendChild(chip);
+    });
+
+    if (state.hiddenRoots.length) {
+      var reset = document.createElement("button");
+      reset.type = "button";
+      reset.className = "trend-chip-reset";
+      reset.textContent = "Show all ⟳";
+      reset.addEventListener("click", function () {
+        state.hiddenRoots = [];
+        saveState();
+        drawAll(container);
+      });
+      leg.appendChild(reset);
+    }
+  }
+
+  /* ---------- Δ panel -------------------------------------------------- */
+
+  function drawDelta(container, data) {
+    var slot = container.querySelector("#trend-delta-slot");
+    slot.innerHTML = "";
+    var baseLabel = container.querySelector("#trend-delta-base");
+
+    /* what series to delta against: total if in total mode, else the sum of
+     * currently visible roots. */
+    var series;
+    if (state.viewMode === "total") {
+      series = data.total.slice();
+    } else {
+      var visible = data.roots.filter(function (r) {
+        return state.hiddenRoots.indexOf(r.path) < 0;
+      });
+      series = data.dates.map(function (_, i) {
+        return visible.reduce(function (s, r) { return s + (r.values[i] || 0); }, 0);
+      });
+    }
+    var base = series[0];
+    var deltas = series.map(function (v) { return v - base; });
+
+    baseLabel.textContent =
+      "baseline " + U.humanBytes(base) + " · " +
+      d3.timeFormat("%b %d")(data.dates[0]);
+
+    var iw = W - m.left - m.right,
+        ih = H_DELTA - m.top - m.bottom;
+    var x = d3.scaleTime().domain(d3.extent(data.dates)).range([0, iw]);
+
+    var lo = Math.min(0, d3.min(deltas));
+    var hi = Math.max(0, d3.max(deltas));
+    if (lo === hi) hi = (lo || 0) + 1;
+    var pad = (hi - lo) * 0.12;
+    var y = d3.scaleLinear().domain([lo - pad, hi + pad]).nice().range([ih, 0]);
+
+    var svg = d3.select(slot).append("svg")
+      .attr("class", "trend-svg trend-delta-svg")
+      .attr("viewBox", [0, 0, W, H_DELTA])
+      .attr("preserveAspectRatio", "xMidYMid meet");
+    var g = svg.append("g").attr("transform", "translate(" + m.left + "," + m.top + ")");
+
+    /* gridlines + y labels (signed) */
+    var yticks = y.ticks(3);
+    g.selectAll("line.trend-grid").data(yticks).enter().append("line")
+      .attr("class", "trend-grid")
+      .attr("x1", 0).attr("x2", iw)
+      .attr("y1", function (d) { return y(d); })
+      .attr("y2", function (d) { return y(d); });
+    g.selectAll("text.trend-ylab").data(yticks).enter().append("text")
+      .attr("class", "trend-ylab")
+      .attr("x", -12)
+      .attr("y", function (d) { return y(d); })
+      .attr("dy", "0.32em")
+      .attr("text-anchor", "end")
+      .text(function (d) {
+        if (d === 0) return "0";
+        return (d > 0 ? "+" : "−") + U.humanBytes(Math.abs(d));
+      });
+
+    var xticks = x.ticks(Math.min(6, data.dates.length));
+    g.selectAll("text.trend-xlab").data(xticks).enter().append("text")
+      .attr("class", "trend-xlab")
+      .attr("x", function (d) { return x(d); })
+      .attr("y", ih + 21)
+      .attr("text-anchor", "middle")
+      .text(d3.timeFormat("%b %d"));
+
+    /* clip rects to split positive (green) from negative (red) areas */
+    var defs = svg.append("defs");
+    defs.append("clipPath").attr("id", "trend-clip-pos")
+      .append("rect").attr("x", 0).attr("y", 0).attr("width", iw).attr("height", y(0));
+    defs.append("clipPath").attr("id", "trend-clip-neg")
+      .append("rect").attr("x", 0).attr("y", y(0)).attr("width", iw).attr("height", Math.max(0, ih - y(0)));
+
+    var deltaPts = data.dates.map(function (d, i) { return { date: d, v: deltas[i] }; });
+    var areaGen = d3.area()
+      .x(function (p) { return x(p.date); })
+      .y0(y(0))
+      .y1(function (p) { return y(p.v); })
+      .curve(d3.curveMonotoneX);
+
+    g.append("path").datum(deltaPts).attr("class", "trend-delta-area pos")
+      .attr("clip-path", "url(#trend-clip-pos)")
+      .attr("d", areaGen);
+    g.append("path").datum(deltaPts).attr("class", "trend-delta-area neg")
+      .attr("clip-path", "url(#trend-clip-neg)")
+      .attr("d", areaGen);
+
+    /* zero baseline (always visible) */
+    g.append("line").attr("class", "trend-zero")
+      .attr("x1", 0).attr("x2", iw)
+      .attr("y1", y(0)).attr("y2", y(0));
+
+    /* line on top */
+    g.append("path").datum(deltaPts).attr("class", "trend-delta-line")
+      .attr("d", d3.line()
+        .x(function (p) { return x(p.date); })
+        .y(function (p) { return y(p.v); })
+        .curve(d3.curveMonotoneX));
+
+    /* dots — clickable */
+    var tip = container.querySelector("#trend-tip");
+    var dots = g.selectAll("g.trend-dot").data(deltaPts).enter().append("g")
+      .attr("class", "trend-dot")
+      .attr("transform", function (p) { return "translate(" + x(p.date) + "," + y(p.v) + ")"; })
+      .style("cursor", "pointer")
+      .attr("tabindex", 0)
+      .attr("role", "link")
+      .attr("aria-label", function (p, i) {
+        var d = p.v;
+        return data.labels[i] + " — " +
+          (d === 0 ? "no change" : (d > 0 ? "+" : "−") + U.humanBytes(Math.abs(d))) +
+          " since first scan. Open scan.";
+      });
+    dots.append("circle").attr("class", "trend-hit").attr("r", 14);
+    dots.append("circle").attr("class", "trend-pt").attr("r", 3.5)
+      .attr("fill", function (p) {
+        return p.v > 0 ? "var(--green)" : p.v < 0 ? "var(--red)" : "var(--dim)";
+      });
+
+    function go(i) { global.location.hash = "#/scan/" + encodeURIComponent(data.ts[i]); }
+    dots.on("click", function (e, p) { go(deltaPts.indexOf(p)); });
+    dots.on("keydown", function (e, p) {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        go(deltaPts.indexOf(p));
+      }
+    });
+    dots.on("mouseenter focus", function (e, p) {
+      var i = deltaPts.indexOf(p);
+      var d = p.v;
+      var sign = d > 0 ? '<span class="trend-tip-d up">▲ +' :
+                 d < 0 ? '<span class="trend-tip-d down">▼ −' :
+                         '<span class="trend-tip-d">±';
+      tip.innerHTML =
+        '<div class="trend-tip-lab">' + U.esc(data.labels[i]) + "</div>" +
+        '<div class="trend-tip-val mono">' +
+          sign + U.esc(U.humanBytes(Math.abs(d))) + "</span>" +
+          ' <span class="trend-tip-since">since first</span>' +
+        "</div>" +
+        '<div class="trend-tip-hint">absolute: ' + U.esc(U.humanBytes(series[i])) + ' · click to open</div>';
+      tip.style.display = "block";
+    })
+    .on("mousemove", function (e) { positionTip(container, tip, e); })
+    .on("mouseleave blur", function () { tip.style.display = "none"; });
+  }
+
+  /* ---------- orchestration ------------------------------------------- */
+
+  function drawAll(container) {
+    /* read data from the data attribute we stashed at first render */
+    var data = container.__trendsData;
+    if (!data) return;
+    drawMain(container, data);
+    drawLegend(container, data);
+    drawDelta(container, data);
+  }
+
+  function render(container, snapshots) {
+    if (!container) return false;
+
+    /* cheap signature: skip re-render if the snapshot list is unchanged */
+    var snaps = (snapshots || []).filter(function (s) { return s.ts; });
+    var sig = snaps.length +
+      ":" + (snaps.length ? snaps[snaps.length - 1].ts : "") +
+      ":" + (snaps.length ? snaps[0].ts : "");
+    if (sig === lastSig && container.__trendsData) {
+      return true; /* still drawn */
+    }
+
+    var data = flatten(snaps);
+    if (!data) {
+      lastSig = null;
+      container.innerHTML = "";
+      container.__trendsData = null;
+      return false;
+    }
+
+    if (!state) state = loadState();
+    lastSig = sig;
+    container.__trendsData = data;
+
+    buildScaffold(container);
+    drawAll(container);
     return true;
   }
 

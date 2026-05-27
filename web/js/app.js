@@ -106,7 +106,7 @@
       '<section class="trend-section" id="trend-section" hidden>' +
       '<div class="section-head">' +
       '<h2 class="section-title">Storage over time</h2>' +
-      '<span class="section-meta">click a point to open that scan</span>' +
+      '<div class="section-head-right" id="trend-controls"></div>' +
       "</div>" +
       '<div id="trend-slot"></div>' +
       "</section>" +

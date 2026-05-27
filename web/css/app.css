@@ -2228,6 +2228,280 @@ button {
   color: var(--green);
 }
 
+/* ----- v2 additions: segmented controls, chips, Δ panel, multi-series --- */
+
+/* segmented controls in the section-head-right */
+.section-head-right .trend-seg {
+  display: inline-flex;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px;
+  gap: 2px;
+}
+.trend-seg-btn {
+  background: transparent;
+  border: 0;
+  color: var(--dim);
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  padding: 4px 12px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color 0.14s, background 0.14s;
+  white-space: nowrap;
+}
+.trend-seg-btn:hover {
+  color: var(--text);
+}
+.trend-seg-btn.is-active {
+  background: var(--panel-hi);
+  color: var(--text-bright);
+  box-shadow: inset 0 0 0 1px var(--border-soft);
+}
+
+/* main chart wrapper — pill needs positioning context */
+.trend-main {
+  position: relative;
+}
+.trend-pill {
+  position: absolute;
+  top: 6px;
+  right: 10px;
+  z-index: 2;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--accent);
+  background: rgba(88, 166, 255, 0.10);
+  border: 1px solid rgba(88, 166, 255, 0.32);
+  padding: 2px 8px;
+  border-radius: 999px;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}
+
+/* "axis is zoomed" affordances */
+.trend-ylab--anchor {
+  font-weight: 700;
+  fill: var(--text);
+}
+.trend-baseline {
+  stroke: var(--dim);
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+  opacity: 0.55;
+}
+
+/* multi-line series */
+.trend-series {
+  fill: none;
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  transition: opacity 0.15s, stroke-width 0.15s;
+}
+.trend-series.is-dim {
+  opacity: 0.18;
+}
+.trend-total-ghost {
+  fill: none;
+  stroke: var(--text-bright);
+  stroke-width: 1;
+  stroke-dasharray: 4 4;
+  opacity: 0.35;
+}
+.trend-pt-multi {
+  stroke: var(--bg);
+  stroke-width: 1.5;
+}
+
+/* stacked area layers */
+.trend-layer {
+  fill-opacity: 0.85;
+  stroke: rgba(13, 17, 23, 0.6);
+  stroke-width: 0.5;
+  transition: opacity 0.15s;
+}
+.trend-layer.is-dim {
+  opacity: 0.18;
+}
+
+/* crosshair */
+.trend-crosshair {
+  stroke: var(--text-bright);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+/* tooltip rows (used by crosshair) */
+.trend-tip {
+  min-width: 200px;
+}
+.trend-tip-row {
+  display: grid;
+  grid-template-columns: 10px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 11.5px;
+  color: var(--text);
+  padding: 1px 0;
+}
+.trend-tip-sw {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  display: inline-block;
+}
+.trend-tip-path {
+  font-family: var(--mono);
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.trend-tip-sz {
+  color: var(--text-bright);
+  font-size: 11.5px;
+}
+.trend-tip-sum {
+  border-top: 1px solid var(--border-soft);
+  margin-top: 4px;
+  padding-top: 4px;
+  font-weight: 600;
+}
+.trend-tip-since {
+  color: var(--dim);
+  font-size: 11px;
+}
+.trend-tip-hint {
+  margin-top: 4px;
+  font-size: 10.5px;
+  color: var(--dim);
+  font-style: italic;
+}
+
+/* chip legend */
+.trend-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 4px;
+  align-items: center;
+}
+.trend-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--panel);
+  border: 1px solid var(--border-soft);
+  color: var(--text);
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  cursor: pointer;
+  transition: opacity 0.15s, background 0.15s, border-color 0.15s;
+  font-family: var(--sans);
+}
+.trend-chip:hover {
+  background: var(--panel-hi);
+  border-color: var(--border);
+}
+.trend-chip-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+  flex: 0 0 auto;
+}
+.trend-chip-path {
+  font-family: var(--mono);
+  color: var(--text);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.trend-chip-size {
+  color: var(--dim);
+  font-size: 11px;
+}
+.trend-chip.is-hidden {
+  opacity: 0.4;
+}
+.trend-chip.is-hidden .trend-chip-path {
+  text-decoration: line-through;
+  color: var(--dim);
+}
+.trend-chip.is-hidden .trend-chip-dot {
+  background: transparent !important;
+  box-shadow: inset 0 0 0 1px var(--dim);
+}
+.trend-chip-reset {
+  background: transparent;
+  border: 0;
+  color: var(--accent);
+  font-size: 11.5px;
+  padding: 4px 8px;
+  cursor: pointer;
+  margin-left: auto;
+}
+.trend-chip-reset:hover {
+  color: var(--text-bright);
+}
+
+/* Δ panel */
+.trend-delta {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border-soft);
+}
+.trend-delta-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.trend-delta-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.trend-delta-base {
+  color: var(--dim);
+  font-size: 11px;
+}
+.trend-delta-svg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+.trend-delta-area.pos {
+  fill: var(--green);
+  fill-opacity: 0.22;
+}
+.trend-delta-area.neg {
+  fill: var(--red);
+  fill-opacity: 0.22;
+}
+.trend-delta-line {
+  fill: none;
+  stroke: var(--text-bright);
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+.trend-zero {
+  stroke: var(--dim);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+  opacity: 0.6;
+}
+
 /* ======================================================================= *
  * ACCESSIBILITY POLISH                                                     *
  * ======================================================================= */
