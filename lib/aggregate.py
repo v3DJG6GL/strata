@@ -28,7 +28,7 @@ _SUM_FIELDS = (
 )
 
 
-def _blank(node, status_keep=True):
+def _blank(node):
     """A shallow copy of `node`'s scalar fields with an empty child list."""
     out = {
         "name": node.get("name"),

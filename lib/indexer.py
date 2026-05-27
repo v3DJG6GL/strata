@@ -105,7 +105,7 @@ def _walk(node, path, hardlinks, ctr, progress):
                 child = Dir(entry.name, node, node.depth + 1)
                 node.children[entry.name] = child
                 ctr[1] += 1  # directories
-                _walk(child, os.path.join(path, entry.name), hardlinks, ctr, progress)
+                _walk(child, entry.path, hardlinks, ctr, progress)
                 continue
 
             # a file (regular / symlink / fifo / socket / device ...)
