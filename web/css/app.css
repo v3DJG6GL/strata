@@ -2305,17 +2305,43 @@ button {
 
 /* sparse-filter overlay caption — centred in the plot area, above the
  * partial chart frame (axis labels + baseline gridline). */
+/* sparse-filter panel — replaces the chart frame entirely when the
+ * filter yields < 2 snapshots. No axes / gridlines / dots: a clean
+ * centered message + the documented "widen" escape hatch. */
 .trend-empty {
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -55%);
-  color: var(--dim);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 220px;
+  padding: 36px 16px;
+  background: rgba(255, 255, 255, 0.012);
+  border: 1px dashed var(--border-soft);
+  border-radius: var(--radius);
+  text-align: center;
+}
+.trend-empty-msg {
+  color: var(--text-bright);
   font-family: var(--sans);
   font-size: 13px;
-  letter-spacing: 0.02em;
-  text-align: center;
-  pointer-events: none;
+}
+.trend-empty-sub {
+  color: var(--dim);
+  font-family: var(--sans);
+  font-size: 12px;
+}
+.trend-empty-cta {
+  color: var(--accent);
+  text-decoration: none;
+  font-family: var(--sans);
+  font-size: 12px;
+  margin-top: 6px;
+}
+.trend-empty-cta:hover,
+.trend-empty-cta:focus-visible {
+  color: var(--text-bright);
+  text-decoration: underline;
 }
 
 /* "Last [N] [d|w|m|y]" custom range input */

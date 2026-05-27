@@ -552,13 +552,12 @@
     }
     var x = d3.scaleTime().domain(xDomain).range([0, iw]);
 
-    /* Sparse-filter branches — honest behaviour, never silently extend. */
-    if (data.dates.length === 0) {
-      drawEmpty(slot, container, x, iw, ih, "No snapshots in this range.");
-      return;
-    }
-    if (data.dates.length === 1) {
-      drawSinglePoint(slot, container, data, x, iw, ih);
+    /* Sparse-filter branch — render a clean message panel (no chart frame)
+     * when the filter yields fewer than 2 snapshots. The chart frame at
+     * sparse counts reads as broken; a centered message + widen CTA is
+     * cleaner. The Δ panel below also hides itself for the same reason. */
+    if (data.dates.length < 2) {
+      drawSparsePanel(slot, container, data.dates.length);
       return;
     }
 
@@ -688,142 +687,36 @@
     resizeObs.observe(svg.node());
   }
 
-  /* ---- sparse-filter render modes -------------------------------------- *
-   * Both modes render the full chart frame (gridlines + x-axis using the
-   * filter's window) so the user sees the range they asked for. The
-   * "widen" CTA is rendered into the snap-count label (see updateSnapCount).
+  /* ---- sparse-filter render mode --------------------------------------- *
+   * When the filter yields 0 or 1 snapshots, the chart frame is more
+   * confusing than helpful (huge empty axes with a single floating dot,
+   * y-range padded around one value, x-axis spanning a window with no
+   * line in it). Render a clean centered message panel instead — no SVG,
+   * no axes, no dot. The "Show last 7 d" CTA is the documented escape
+   * hatch. The Δ panel hides itself when the slice has < 2 points.
    * --------------------------------------------------------------------- */
+  function drawSparsePanel(slot, container, filteredCount) {
+    slot.querySelectorAll("svg").forEach(function (n) { n.remove(); });
+    slot.querySelectorAll(".trend-empty").forEach(function (n) { n.remove(); });
 
-  function drawEmpty(slot, container, x, iw, ih, message) {
-    var svg = d3.select(slot).append("svg")
-      .attr("class", "trend-svg")
-      .attr("viewBox", [0, 0, W, H_MAIN])
-      .attr("preserveAspectRatio", "xMidYMid meet");
-    var g = svg.append("g")
-      .attr("transform", "translate(" + m.left + "," + m.top + ")");
+    var msg = filteredCount === 0
+      ? "No snapshots in this range."
+      : "Only 1 snapshot in this range.";
 
-    /* x labels (windowed) */
-    var xFmt = pickTimeFormat(x.domain());
-    var xticks = x.ticks(6);
-    g.selectAll("text.trend-xlab").data(xticks).enter().append("text")
-      .attr("class", "trend-xlab")
-      .attr("x", function (d) { return x(d); })
-      .attr("y", ih + 21)
-      .attr("text-anchor", "middle")
-      .text(xFmt);
-
-    /* a single thin baseline so the chart frame is visible */
-    g.append("line").attr("class", "trend-grid")
-      .attr("x1", 0).attr("x2", iw)
-      .attr("y1", ih).attr("y2", ih);
-
-    /* centered "no snapshots" caption */
-    var caption = document.createElement("div");
-    caption.className = "trend-empty";
-    caption.textContent = message;
-    slot.appendChild(caption);
-
-    /* counter-scale (consistent with the full chart) */
-    fitTextOn(svg);
-  }
-
-  function drawSinglePoint(slot, container, data, x, iw, ih) {
-    var visible = data.roots.filter(function (r) {
-      return state.hiddenRoots.indexOf(r.path) < 0;
+    var panel = document.createElement("div");
+    panel.className = "trend-empty";
+    panel.innerHTML =
+      '<div class="trend-empty-msg">' + U.esc(msg) + "</div>" +
+      '<div class="trend-empty-sub">Widen the filter for a trend.</div>' +
+      '<a href="#" class="trend-empty-cta">Show last 7 d →</a>';
+    panel.querySelector(".trend-empty-cta").addEventListener("click", function (e) {
+      e.preventDefault();
+      state.range = { kind: "preset", preset: "7d" };
+      saveState();
+      syncRangeControls(container);
+      drawAll(container);
     });
-
-    /* y domain: pick the relevant value(s) for the current view mode and
-     * centre them so the dot doesn't get pinned to an axis edge. */
-    var values;
-    if (state.viewMode === "total") {
-      values = [data.total[0]];
-    } else if (state.viewMode === "stacked") {
-      /* stacked of a single point is meaningless — render as a per-root dot
-       * cluster (same as Lines mode) so the user still sees the values. */
-      values = visible
-        .map(function (r) { return r.values[0]; })
-        .filter(function (v) { return v != null; });
-    } else {
-      values = visible
-        .map(function (r) { return r.values[0]; })
-        .filter(function (v) { return v != null; });
-    }
-    if (!values.length) values = [0];
-
-    var lo = d3.min(values), hi = d3.max(values);
-    var pad = Math.max((hi - lo) * 0.4, hi * 0.08, 1);
-    var domain = state.yMode === "zero"
-      ? [0, (hi || 1) * 1.12]
-      : [Math.max(0, lo - pad), hi + pad];
-    var y = d3.scaleLinear().domain(domain).nice(5).range([ih, 0]);
-
-    var svg = d3.select(slot).append("svg")
-      .attr("class", "trend-svg")
-      .attr("viewBox", [0, 0, W, H_MAIN])
-      .attr("preserveAspectRatio", "xMidYMid meet");
-    var g = svg.append("g")
-      .attr("transform", "translate(" + m.left + "," + m.top + ")");
-
-    /* gridlines + y labels (adaptive precision, same as the normal path) */
-    var yticks = y.ticks(5);
-    var yStep = yticks.length > 1 ? yticks[1] - yticks[0] : (yticks[0] || 1);
-    var yRef  = yticks.length
-      ? Math.max.apply(null, yticks.map(function (d) { return Math.abs(d); }))
-      : 1;
-    g.selectAll("line.trend-grid").data(yticks).enter().append("line")
-      .attr("class", "trend-grid")
-      .attr("x1", 0).attr("x2", iw)
-      .attr("y1", function (d) { return y(d); })
-      .attr("y2", function (d) { return y(d); });
-    g.selectAll("text.trend-ylab").data(yticks).enter().append("text")
-      .attr("class", "trend-ylab")
-      .attr("x", -12)
-      .attr("y", function (d) { return y(d); })
-      .attr("dy", "0.32em")
-      .attr("text-anchor", "end")
-      .text(function (d) { return U.humanBytesAtStep(d, yStep, yRef); });
-
-    /* x labels (windowed) */
-    var xFmt = pickTimeFormat(x.domain());
-    var xticks = x.ticks(6);
-    g.selectAll("text.trend-xlab").data(xticks).enter().append("text")
-      .attr("class", "trend-xlab")
-      .attr("x", function (d) { return x(d); })
-      .attr("y", ih + 21)
-      .attr("text-anchor", "middle")
-      .text(xFmt);
-
-    /* draw the dot(s) at the single timestamp */
-    var d0 = data.dates[0];
-    if (state.viewMode === "total") {
-      var v = data.total[0];
-      g.append("circle").attr("class", "trend-pt")
-        .attr("cx", x(d0)).attr("cy", y(v)).attr("r", 5);
-    } else {
-      visible.forEach(function (r) {
-        var v = r.values[0];
-        if (v == null) return;
-        g.append("circle").attr("class", "trend-pt-multi")
-          .attr("cx", x(d0)).attr("cy", y(v)).attr("r", 4.5)
-          .attr("fill", assignColor(r.path));
-      });
-    }
-
-    fitTextOn(svg);
-  }
-
-  /* Counter-scale axis labels so they keep their pixel size regardless of
-   * the rendered SVG width — extracted from drawMain so the sparse modes
-   * can reuse it. */
-  function fitTextOn(svg) {
-    function fit() {
-      var w = svg.node().getBoundingClientRect().width;
-      svg.node().style.setProperty("--trend-k", w > 0 ? String(W / w) : "1");
-    }
-    fit();
-    if (resizeObs) resizeObs.disconnect();
-    resizeObs = new ResizeObserver(fit);
-    resizeObs.observe(svg.node());
+    slot.appendChild(panel);
   }
 
   /* ---- total view: one accent line + clickable dots ---- */
@@ -1231,7 +1124,11 @@
 
     var iw = W - m.left - m.right,
         ih = H_DELTA - m.top - m.bottom;
-    var x = d3.scaleTime().domain(d3.extent(data.dates)).range([0, iw]);
+    /* mirror drawMain's x-domain expression so the two panels line up on
+     * the same time range — without this they disagree under any windowed
+     * filter where the data covers only part of the requested span. */
+    var xDomain = data.window || d3.extent(data.dates);
+    var x = d3.scaleTime().domain(xDomain).range([0, iw]);
 
     var lo = Math.min(0, d3.min(deltas));
     var hi = Math.max(0, d3.max(deltas));
