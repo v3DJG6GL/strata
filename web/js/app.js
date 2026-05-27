@@ -241,7 +241,6 @@
         var scanning = !!(st && st.scanning);
 
         if (scanning) {
-          if (!slot.querySelector(".telemetry")) slot.innerHTML = "";
           var panelWrap = slot.querySelector(".live-wrap");
           if (!panelWrap) {
             panelWrap = document.createElement("section");
@@ -250,7 +249,7 @@
             slot.appendChild(panelWrap);
           }
           global.Stats.renderLive(panelWrap, st);
-        } else {
+        } else if (slot.firstChild) {
           slot.innerHTML = "";
         }
 
@@ -268,7 +267,7 @@
   /* ====================================================================== *
    * SCAN DETAIL                                                            *
    * ====================================================================== */
-  var detailState = null; // { ts, sb, statsCollapsed }
+  var detailState = null; // { ts, sb, focusPath }
 
   function renderScanDetail(ts, focusPath) {
     clearPoll();
