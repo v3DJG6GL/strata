@@ -89,13 +89,16 @@
     return isNaN(n) ? 0 : n;
   }
 
-  /* Signed human string with a leading ▲ / ▼ glyph (or "—" when flat). */
+  /* Signed human string with a leading ▲ / ▼ glyph (or "± 0" when flat).
+   * `fmt` is always called with a non-negative value — the sign is owned
+   * here. This matters for raw formatters like U.commaCount which would
+   * otherwise emit a native "-" alongside our "−" ("▼ −-50"). */
   function signedStr(v, fmt) {
     v = num(v);
     if (v === 0) return "± 0";
     var glyph = v > 0 ? "▲" : "▼";
     var sign = v > 0 ? "+" : "−";
-    return glyph + " " + sign + fmt(v);
+    return glyph + " " + sign + fmt(Math.abs(v));
   }
 
   /* Signed percentage of a delta against a base value. */
