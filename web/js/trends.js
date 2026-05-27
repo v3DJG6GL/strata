@@ -823,6 +823,19 @@
       .attr("fill", function (s) { return assignColor(s.key); })
       .attr("d", areaGen);
 
+    /* Top-edge line per layer — matches the Total view's "subtle fill +
+     * solid line carries the shape" idiom, so Stacked stops looking like
+     * dense solid blocks and slots into the dashboard's visual language. */
+    var edgeGen = d3.line()
+      .x(function (d) { return x(d.data._date); })
+      .y(function (d) { return y(d[1]); })
+      .curve(d3.curveMonotoneX);
+    g.selectAll("path.trend-layer-edge").data(stacked).enter().append("path")
+      .attr("class", "trend-layer-edge")
+      .attr("data-path", function (s) { return s.key; })
+      .attr("stroke", function (s) { return assignColor(s.key); })
+      .attr("d", edgeGen);
+
     crosshair(g, data, visible, x, y, iw, ih, container, true);
   }
 
@@ -1050,13 +1063,13 @@
             n.classList.toggle("is-dim", n.dataset.path !== r.path);
           });
         } else if (state.viewMode === "stacked") {
-          container.querySelectorAll(".trend-layer").forEach(function (n) {
+          container.querySelectorAll(".trend-layer, .trend-layer-edge").forEach(function (n) {
             n.classList.toggle("is-dim", n.dataset.path !== r.path);
           });
         }
       });
       chip.addEventListener("mouseleave", function () {
-        container.querySelectorAll(".trend-series, .trend-layer").forEach(function (n) {
+        container.querySelectorAll(".trend-series, .trend-layer, .trend-layer-edge").forEach(function (n) {
           n.classList.remove("is-dim");
         });
       });

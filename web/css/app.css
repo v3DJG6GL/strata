@@ -2453,15 +2453,27 @@ button {
   stroke-width: 1.5;
 }
 
-/* stacked area layers */
+/* Stacked area layers — translucent fill, no separator stroke; the shape
+ * signal is carried by .trend-layer-edge (a top-boundary line per layer
+ * in the layer's colour). Matches the Total / Δ aesthetic of subtle fill
+ * + solid coloured line instead of dense solid blocks. */
 .trend-layer {
-  fill-opacity: 0.85;
-  stroke: rgba(13, 17, 23, 0.6);
-  stroke-width: 0.5;
-  transition: opacity 0.15s;
+  fill-opacity: 0.28;
+  stroke: none;
+  transition: opacity 0.15s, fill-opacity 0.15s;
+}
+.trend-layer-edge {
+  fill: none;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+  transition: opacity 0.15s, stroke-opacity 0.15s;
 }
 .trend-layer.is-dim {
   opacity: 0.18;
+}
+.trend-layer-edge.is-dim {
+  opacity: 0.25;
 }
 
 /* crosshair */
