@@ -43,7 +43,6 @@
     "#bab0ac", /* warm grey */
     "#59a14f"  /* green — last because it overlaps the delta panel */
   ];
-  var ACCENT = "#58a6ff";
 
   /* Module-level state — survives re-renders on the same dashboard view. */
   var resizeObs = null;
@@ -173,18 +172,10 @@
         for (var k = values.length - 1; k >= 0; k--) {
           if (values[k] != null) { lv = values[k]; break; }
         }
-        /* re-anchor firstIdx into the filtered slice; -1 if root hadn't
-         * appeared yet by the time the window opens — UI treats this as
-         * "absent" and renders gaps. */
-        var newFirst = -1;
-        for (var n = 0; n < keep.length; n++) {
-          if (keep[n] >= rt.firstIdx) { newFirst = n; break; }
-        }
         return {
           path: rt.path,
           values: values,
-          latest: lv != null ? lv : rt.latest,
-          firstIdx: newFirst < 0 ? values.length : newFirst
+          latest: lv != null ? lv : rt.latest
         };
       }),
       window: [from, to]
@@ -232,7 +223,7 @@
    *     labels: [String, ...],
    *     ts:     [String, ...],        // for #/scan/<ts> linking
    *     total:  [Number, ...],
-   *     roots:  [ {path, values:[Number|null], latest:Number, firstIdx:Int}, ... ]
+   *     roots:  [ {path, values:[Number|null], latest:Number}, ... ]
    *   }
    * The roots[] array is sorted by latest size, descending. */
   function flatten(snapshots) {
@@ -256,7 +247,7 @@
     if (rows.length < 2) return null;
 
     var dates = [], labels = [], ts = [], total = [];
-    var byRoot = {};               /* path -> {values, latest, firstIdx} */
+    var byRoot = {};               /* path -> {values, latest} */
     rows.forEach(function (r, i) {
       dates.push(r.date);
       labels.push(r.label);
@@ -268,7 +259,7 @@
         var v = Number(root.size_actual);
         if (isNaN(v)) return;
         if (!byRoot[p]) {
-          byRoot[p] = { values: [], latest: 0, firstIdx: i };
+          byRoot[p] = { values: [], latest: 0 };
           /* pad missing prefix with nulls */
           while (byRoot[p].values.length < i) byRoot[p].values.push(null);
         }
@@ -286,8 +277,7 @@
         return {
           path: p,
           values: byRoot[p].values,
-          latest: byRoot[p].latest,
-          firstIdx: byRoot[p].firstIdx
+          latest: byRoot[p].latest
         };
       })
       .sort(function (a, b) { return b.latest - a.latest; });
