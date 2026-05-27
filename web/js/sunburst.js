@@ -988,6 +988,7 @@
 
       Promise.resolve(opts.fetchSubtree(path))
         .then(function (node) {
+          if (destroyed) return;
           var kids = (node && node.children) || [];
           subtreeCache[path] = kids;
           graftChildren(data, kids);
@@ -998,6 +999,7 @@
           if (global.console) console.warn("Subtree fetch failed:", err);
         })
         .then(function () {
+          if (destroyed) return;
           pendingFetch[path] = false;
           hideSpinner();
         });
@@ -1161,13 +1163,15 @@
       if (deepest && deepest !== focusNode) zoomTo(deepest, true);
     }
 
-    /* Find the deepest loaded hierarchy node whose path is a prefix of `path`. */
+    /* Find the deepest loaded hierarchy node whose path is a prefix of `path`.
+     * Boundary-aware so /foo doesn't match /foobar. */
     function deepestLoadedAncestor(path) {
       var best = root;
       root.each(function (d) {
         var p = d.data && d.data.path;
-        if (p && path.indexOf(p) === 0 && p.length > (best.data.path || "").length) {
-          best = d;
+        if (!p) return;
+        if (p === path || path.indexOf(p + "/") === 0) {
+          if (p.length > (best.data.path || "").length) best = d;
         }
       });
       return best;
@@ -1250,8 +1254,14 @@
         resizeObs.disconnect();
         cancelAnimationFrame(roRaf);
         toolbar.removeEventListener("click", onToolbarClick);
-        if (svg && svg.node() && svg.node().parentNode) {
-          svg.node().parentNode.removeChild(svg.node());
+        if (svg) {
+          /* Cancel any in-flight zoom tween so it doesn't keep ticking
+           * for TWEEN_MS against the about-to-be-detached subtree. */
+          svg.interrupt();
+          svg.selectAll("*").interrupt();
+          if (svg.node() && svg.node().parentNode) {
+            svg.node().parentNode.removeChild(svg.node());
+          }
         }
         pendingFetch = {};
       }
