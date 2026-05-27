@@ -139,7 +139,7 @@
    * range the user asked for). Pure. */
   function applyRange(data) {
     if (!data || data.dates.length < 2) {
-      return assign({}, data, { window: null });
+      return Object.assign({}, data, { window: null });
     }
     var r = state.range || { kind: "all" };
     if (r.kind === "all") return assign({}, data, { window: null });
@@ -154,7 +154,7 @@
       from = new Date(r.brush[0]);
       to   = new Date(r.brush[1]);
     } else {
-      return assign({}, data, { window: null });
+      return Object.assign({}, data, { window: null });
     }
 
     /* Indices kept in [from, to]. Linear scan is fine — at the snapshot
@@ -196,18 +196,6 @@
     if (span < 7 * DAY)   return d3.timeFormat("%b %d %H:%M");  /* May 26 02:00 */
     if (span < 365 * DAY) return d3.timeFormat("%b %d");         /* May 26     */
     return d3.timeFormat("%b %Y");                               /* May 2026   */
-  }
-
-  /* tiny Object.assign shim (kept ES5-friendly to match the file's style) */
-  function assign(target) {
-    for (var i = 1; i < arguments.length; i++) {
-      var src = arguments[i];
-      if (!src) continue;
-      for (var k in src) {
-        if (Object.prototype.hasOwnProperty.call(src, k)) target[k] = src[k];
-      }
-    }
-    return target;
   }
 
   /* ---------- data shaping --------------------------------------------- */
@@ -750,28 +738,33 @@
     dots.append("circle").attr("class", "trend-pt").attr("r", 4);
 
     /* Hover callback consumed by attachBrush — renders the total-mode
-     * tooltip (with delta-to-previous) at the nearest x. */
+     * tooltip (with delta-to-previous) at the nearest x. Identity-guarded
+     * so pointermove only reflows when the nearest index actually changes. */
     var tip = container.querySelector("#trend-tip");
+    var lastI = -1;
     container.__hoverFn = function (mx, event) {
       var i = d3.bisectCenter(dateMs, +x.invert(mx));
-      var p = pts[i];
-      var prev = i > 0 ? data.total[i - 1] : null;
-      var dHtml = "";
-      if (prev != null) {
-        var d = p.size - prev;
-        if (d !== 0) {
-          dHtml = ' <span class="trend-tip-d ' + (d > 0 ? "up" : "down") + '">' +
-            (d > 0 ? "▲ " : "▼ ") + U.esc(U.humanBytes(Math.abs(d))) + "</span>";
+      if (i !== lastI) {
+        lastI = i;
+        var p = pts[i];
+        var prev = i > 0 ? data.total[i - 1] : null;
+        var dHtml = "";
+        if (prev != null) {
+          var d = p.size - prev;
+          if (d !== 0) {
+            dHtml = ' <span class="trend-tip-d ' + (d > 0 ? "up" : "down") + '">' +
+              (d > 0 ? "▲ " : "▼ ") + U.esc(U.humanBytes(Math.abs(d))) + "</span>";
+          }
         }
+        tip.innerHTML =
+          '<div class="trend-tip-lab">' + U.esc(data.labels[i]) + "</div>" +
+          '<div class="trend-tip-val mono">' + U.esc(U.humanBytes(p.size)) + dHtml + "</div>" +
+          '<div class="trend-tip-hint">click to open · drag to zoom</div>';
+        tip.style.display = "block";
       }
-      tip.innerHTML =
-        '<div class="trend-tip-lab">' + U.esc(data.labels[i]) + "</div>" +
-        '<div class="trend-tip-val mono">' + U.esc(U.humanBytes(p.size)) + dHtml + "</div>" +
-        '<div class="trend-tip-hint">click to open · drag to zoom</div>';
-      tip.style.display = "block";
       positionTip(container, tip, event);
     };
-    container.__hoverLeaveFn = function () { tip.style.display = "none"; };
+    container.__hoverLeaveFn = function () { lastI = -1; tip.style.display = "none"; };
   }
 
   /* ---- lines view: per-root + faint total overlay + crosshair ---- */
@@ -852,49 +845,57 @@
     var tip = container.querySelector("#trend-tip");
     var dateMs = data.dateMs;
 
+    /* Identity-guarded: pointermove that lands on the same nearest index
+     * only repositions the tip — no DOM remove+append churn on marks or
+     * innerHTML reflow. */
+    var lastI = -1;
     container.__hoverFn = function (mx, event) {
       var i = d3.bisectCenter(dateMs, +x.invert(mx));
-      rule.attr("x1", x(data.dates[i])).attr("x2", x(data.dates[i]))
-          .style("display", null);
+      if (i !== lastI) {
+        lastI = i;
+        rule.attr("x1", x(data.dates[i])).attr("x2", x(data.dates[i]))
+            .style("display", null);
 
-      /* mark dots at hovered x */
-      var hits = visible
-        .map(function (r) { return { path: r.path, v: r.values[i] }; })
-        .filter(function (h) { return h.v != null; })
-        .sort(function (a, b) { return b.v - a.v; });
+        /* mark dots at hovered x */
+        var hits = visible
+          .map(function (r) { return { path: r.path, v: r.values[i] }; })
+          .filter(function (h) { return h.v != null; })
+          .sort(function (a, b) { return b.v - a.v; });
 
-      marks.selectAll("*").remove();
-      if (!isStacked) {
-        hits.forEach(function (h) {
-          marks.append("circle")
-            .attr("class", "trend-pt-multi")
-            .attr("r", 3.5)
-            .attr("cx", x(data.dates[i]))
-            .attr("cy", y(h.v))
-            .attr("fill", assignColor(h.path));
-        });
-      }
+        marks.selectAll("*").remove();
+        if (!isStacked) {
+          hits.forEach(function (h) {
+            marks.append("circle")
+              .attr("class", "trend-pt-multi")
+              .attr("r", 3.5)
+              .attr("cx", x(data.dates[i]))
+              .attr("cy", y(h.v))
+              .attr("fill", assignColor(h.path));
+          });
+        }
 
-      var rowsHtml = hits.slice(0, 8).map(function (h) {
-        return '<div class="trend-tip-row">' +
-          '<span class="trend-tip-sw" style="background:' + assignColor(h.path) + '"></span>' +
-          '<span class="trend-tip-path">' + U.esc(U.shortPath(h.path, 32)) + '</span>' +
-          '<span class="trend-tip-sz mono">' + U.esc(U.humanBytes(h.v)) + '</span>' +
+        var rowsHtml = hits.slice(0, 8).map(function (h) {
+          return '<div class="trend-tip-row">' +
+            '<span class="trend-tip-sw" style="background:' + assignColor(h.path) + '"></span>' +
+            '<span class="trend-tip-path">' + U.esc(U.shortPath(h.path, 32)) + '</span>' +
+            '<span class="trend-tip-sz mono">' + U.esc(U.humanBytes(h.v)) + '</span>' +
+            '</div>';
+        }).join("");
+        var sumVisible = hits.reduce(function (s, h) { return s + h.v; }, 0);
+        tip.innerHTML =
+          '<div class="trend-tip-lab">' + U.esc(data.labels[i]) + "</div>" +
+          rowsHtml +
+          '<div class="trend-tip-row trend-tip-sum">' +
+            '<span class="trend-tip-sw" style="background:transparent;border:1px solid var(--accent)"></span>' +
+            '<span class="trend-tip-path">' + (isStacked ? "Stack total" : "Visible total") + '</span>' +
+            '<span class="trend-tip-sz mono">' + U.esc(U.humanBytes(sumVisible)) + '</span>' +
           '</div>';
-      }).join("");
-      var sumVisible = hits.reduce(function (s, h) { return s + h.v; }, 0);
-      tip.innerHTML =
-        '<div class="trend-tip-lab">' + U.esc(data.labels[i]) + "</div>" +
-        rowsHtml +
-        '<div class="trend-tip-row trend-tip-sum">' +
-          '<span class="trend-tip-sw" style="background:transparent;border:1px solid var(--accent)"></span>' +
-          '<span class="trend-tip-path">' + (isStacked ? "Stack total" : "Visible total") + '</span>' +
-          '<span class="trend-tip-sz mono">' + U.esc(U.humanBytes(sumVisible)) + '</span>' +
-        '</div>';
-      tip.style.display = "block";
+        tip.style.display = "block";
+      }
       positionTip(container, tip, event);
     };
     container.__hoverLeaveFn = function () {
+      lastI = -1;
       rule.style("display", "none");
       marks.selectAll("*").remove();
       tip.style.display = "none";
@@ -990,21 +991,24 @@
       if (!down) return;
       try { hotNode.releasePointerCapture(event.pointerId); } catch (_) {}
       var p = localPointer(event);
-      if (dragging) {
-        var lo = Math.max(0, Math.min(down[0], p[0]));
-        var hi = Math.min(iw, Math.max(down[0], p[0]));
+      var lo = Math.max(0, Math.min(down[0], p[0]));
+      var hi = Math.min(iw, Math.max(down[0], p[0]));
+      var spanned = hi - lo;
+      /* Treat dragging+too-narrow the same as a click — a shaky tap that
+       * crossed the drag threshold but returned near the start otherwise
+       * gets silently swallowed (selection hidden, no nav). */
+      if (dragging && spanned >= DRAG_THRESHOLD) {
         sel.style("display", "none");
-        if (hi - lo >= DRAG_THRESHOLD) {
-          var t0 = x.invert(lo), t1 = x.invert(hi);
-          state.range = {
-            kind: "brush",
-            brush: [t0.toISOString(), t1.toISOString()]
-          };
-          saveState();
-          syncRangeControls(container);
-          drawAll(container);
-        }
+        var t0 = x.invert(lo), t1 = x.invert(hi);
+        state.range = {
+          kind: "brush",
+          brush: [t0.toISOString(), t1.toISOString()]
+        };
+        saveState();
+        syncRangeControls(container);
+        drawAll(container);
       } else {
+        if (dragging) sel.style("display", "none");
         /* click without drag → open nearest scan, deferred so a follow-up
          * pointerdown (the start of a dblclick) can cancel us. */
         var ts = data.ts[nearestIndex(p[0])];
