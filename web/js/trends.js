@@ -941,6 +941,11 @@
     var down = null;       /* [x,y] at mousedown, null when idle */
     var dragging = false;
     var hotNode = hot.node();
+    /* Pending single-click navigation. Held briefly so a follow-up
+     * pointerdown (the start of a dblclick) can cancel it — otherwise
+     * the first click navigates away before dblclick-to-reset fires. */
+    var clickTimer = null;
+    var CLICK_DEFER_MS = 220;
 
     /* d3.pointer walks getScreenCTM, so it returns user-space coords inside
      * the inner g (where the rect lives at (0,0)..(iw,ih)) — exactly what
@@ -975,6 +980,9 @@
 
     hot.on("pointerdown", function (event) {
       if (event.button !== 0) return;
+      /* second click of a dblclick — cancel the pending nav so the
+       * dblclick handler can reset the range instead. */
+      if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
       down = localPointer(event);
       dragging = false;
       try { hotNode.setPointerCapture(event.pointerId); } catch (_) {}
@@ -999,9 +1007,14 @@
           drawAll(container);
         }
       } else {
-        /* click without drag → open nearest scan */
-        var i = nearestIndex(p[0]);
-        global.location.hash = "#/scan/" + encodeURIComponent(data.ts[i]);
+        /* click without drag → open nearest scan, deferred so a follow-up
+         * pointerdown (the start of a dblclick) can cancel us. */
+        var ts = data.ts[nearestIndex(p[0])];
+        if (clickTimer) clearTimeout(clickTimer);
+        clickTimer = setTimeout(function () {
+          clickTimer = null;
+          global.location.hash = "#/scan/" + encodeURIComponent(ts);
+        }, CLICK_DEFER_MS);
       }
       down = null;
       dragging = false;
@@ -1019,6 +1032,7 @@
 
     hot.on("dblclick", function (event) {
       event.preventDefault();
+      if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
       if (state.range && (state.range.kind === "brush" || state.range.kind === "custom")) {
         state.range = { kind: "all" };
         saveState();
