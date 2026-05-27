@@ -172,14 +172,11 @@ def op_snapshots():
             "roots": None,
         }
         try:
-            entry["db_bytes"] = os.path.getsize(artifact(ts, ".full.json.gz"))
-        except OSError:
-            pass
-        try:
             st = get_stats(ts)
             entry["duration_sec"] = st.get("duration_sec")
             entry["total"] = st.get("total")
             entry["roots"] = st.get("roots")
+            entry["db_bytes"] = st.get("db_bytes")
         except Exception:
             pass
         snapshots.append(entry)
