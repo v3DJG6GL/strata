@@ -48,6 +48,9 @@
   var resizeObs = null;
   var lastSig = null;          /* short hash of the snapshots we last drew */
   var state = null;            /* loaded lazily on first render            */
+  /* Pending click→navigate timer; module-scope so a fresh draw can cancel
+   * it (the timer outlives the closure that scheduled it). */
+  var pendingClickTimer = null;
 
   /* ---------- state persistence ---------------------------------------- */
 
@@ -940,10 +943,9 @@
     var down = null;       /* [x,y] at mousedown, null when idle */
     var dragging = false;
     var hotNode = hot.node();
-    /* Pending single-click navigation. Held briefly so a follow-up
-     * pointerdown (the start of a dblclick) can cancel it — otherwise
-     * the first click navigates away before dblclick-to-reset fires. */
-    var clickTimer = null;
+    /* Single-click navigation lives at module scope so a redraw can clear
+     * a still-pending timer (otherwise a click followed by a view/range
+     * change inside CLICK_DEFER_MS would navigate to the old snapshot). */
     var CLICK_DEFER_MS = 220;
 
     /* d3.pointer walks getScreenCTM, so it returns user-space coords inside
@@ -978,7 +980,7 @@
       if (event.button !== 0) return;
       /* second click of a dblclick — cancel the pending nav so the
        * dblclick handler can reset the range instead. */
-      if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+      if (pendingClickTimer) { clearTimeout(pendingClickTimer); pendingClickTimer = null; }
       down = localPointer(event);
       dragging = false;
       try { hotNode.setPointerCapture(event.pointerId); } catch (_) {}
@@ -1006,9 +1008,9 @@
         /* click without drag → open nearest scan, deferred so a follow-up
          * pointerdown (the start of a dblclick) can cancel us. */
         var ts = data.ts[nearestIndex(p[0])];
-        if (clickTimer) clearTimeout(clickTimer);
-        clickTimer = setTimeout(function () {
-          clickTimer = null;
+        if (pendingClickTimer) clearTimeout(pendingClickTimer);
+        pendingClickTimer = setTimeout(function () {
+          pendingClickTimer = null;
           global.location.hash = "#/scan/" + encodeURIComponent(ts);
         }, CLICK_DEFER_MS);
       }
@@ -1028,7 +1030,7 @@
 
     hot.on("dblclick", function (event) {
       event.preventDefault();
-      if (clickTimer) { clearTimeout(clickTimer); clickTimer = null; }
+      if (pendingClickTimer) { clearTimeout(pendingClickTimer); pendingClickTimer = null; }
       if (state.range && (state.range.kind === "brush" || state.range.kind === "custom")) {
         state.range = { kind: "all" };
         saveState();
@@ -1291,6 +1293,10 @@
      * therefore the Δ baseline tracks the *visible* first point. */
     var raw = container.__trendsData;
     if (!raw) return;
+    /* Cancel any pending click→navigate from the previous draw; the user
+     * just toggled a control (range / view / metric), so completing the
+     * navigation would land on a now-stale snapshot. */
+    if (pendingClickTimer) { clearTimeout(pendingClickTimer); pendingClickTimer = null; }
     var data = applyRange(raw);
     /* dateMs is consumed by bisectCenter in drawTotal / crosshair / attachBrush
      * / drawDelta -- cache the numeric coercion once per draw rather than
