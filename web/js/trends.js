@@ -66,7 +66,8 @@
           ? s.viewMode
           : "total",
       hiddenRoots: Array.isArray(s.hiddenRoots) ? s.hiddenRoots.slice() : [],
-      colors: s.colors && typeof s.colors === "object" ? s.colors : {}
+      colors: s.colors && typeof s.colors === "object" ? s.colors : {},
+      range: sanitizeRange(s.range)
     };
   }
 
@@ -78,12 +79,102 @@
           yMode: state.yMode,
           viewMode: state.viewMode,
           hiddenRoots: state.hiddenRoots,
-          colors: state.colors
+          colors: state.colors,
+          range: state.range
         })
       );
     } catch (_) {
       /* private mode / quota — non-fatal */
     }
+  }
+
+  /* ---------- time range -------------------------------------------------
+   * State shape:
+   *   { kind: "all" }
+   *   { kind: "preset", preset: "7d"|"14d"|"30d"|"90d" }
+   *   { kind: "custom", custom: { n: 1..999, unit: "d"|"w"|"m"|"y" } }
+   *   { kind: "brush",  brush: [isoFrom, isoTo] }
+   * Always anchored on the newest snapshot for preset/custom — so "Last 7d"
+   * means the last 7 days of recorded data, not "today minus 7 days". */
+  var PRESET_MS = {
+    "7d":  7 * 86400000,
+    "14d": 14 * 86400000,
+    "30d": 30 * 86400000,
+    "90d": 90 * 86400000
+  };
+
+  function unitDays(u) {
+    return u === "y" ? 365 : u === "m" ? 30 : u === "w" ? 7 : 1;
+  }
+  function customMs(c) {
+    if (!c || !c.n) return PRESET_MS["30d"];
+    return Math.max(1, Math.min(999, c.n)) * unitDays(c.unit) * 86400000;
+  }
+
+  function sanitizeRange(r) {
+    if (!r || typeof r !== "object") return { kind: "all" };
+    if (r.kind === "preset" && PRESET_MS[r.preset]) {
+      return { kind: "preset", preset: r.preset };
+    }
+    if (r.kind === "custom" && r.custom && typeof r.custom.n === "number") {
+      var unit = ["d", "w", "m", "y"].indexOf(r.custom.unit) >= 0 ? r.custom.unit : "d";
+      var n = Math.max(1, Math.min(999, Math.round(r.custom.n))) || 30;
+      return { kind: "custom", custom: { n: n, unit: unit } };
+    }
+    if (r.kind === "brush" && Array.isArray(r.brush) && r.brush.length === 2) {
+      var t0 = new Date(r.brush[0]), t1 = new Date(r.brush[1]);
+      if (!isNaN(+t0) && !isNaN(+t1) && t1 > t0) {
+        return { kind: "brush", brush: [t0.toISOString(), t1.toISOString()] };
+      }
+    }
+    return { kind: "all" };
+  }
+
+  /* Returns a filtered copy of `data` honouring state.range; falls back to
+   * the original if the filter would leave < 2 snapshots. Pure. */
+  function applyRange(data) {
+    if (!data || data.dates.length < 2) return data;
+    var r = state.range || { kind: "all" };
+    if (r.kind === "all") return data;
+
+    var now = data.dates[data.dates.length - 1];
+    var from, to = now;
+    if (r.kind === "preset") {
+      from = new Date(+now - PRESET_MS[r.preset]);
+    } else if (r.kind === "custom") {
+      from = new Date(+now - customMs(r.custom));
+    } else if (r.kind === "brush") {
+      from = new Date(r.brush[0]);
+      to   = new Date(r.brush[1]);
+    } else {
+      return data;
+    }
+
+    var i0 = 0, i1 = data.dates.length - 1;
+    while (i0 < i1 && data.dates[i0] < from) i0++;
+    while (i1 > i0 && data.dates[i1] > to)   i1--;
+    if (i1 - i0 < 1) return data; /* < 2 visible points — bail to unfiltered */
+
+    return {
+      dates:  data.dates.slice(i0, i1 + 1),
+      labels: data.labels.slice(i0, i1 + 1),
+      ts:     data.ts.slice(i0, i1 + 1),
+      total:  data.total.slice(i0, i1 + 1),
+      roots: data.roots.map(function (rt) {
+        var values = rt.values.slice(i0, i1 + 1);
+        /* the chip's "latest" should reflect the newest visible point */
+        var lv = null;
+        for (var j = values.length - 1; j >= 0; j--) {
+          if (values[j] != null) { lv = values[j]; break; }
+        }
+        return {
+          path: rt.path,
+          values: values,
+          latest: lv != null ? lv : rt.latest,
+          firstIdx: Math.max(0, rt.firstIdx - i0)
+        };
+      })
+    };
   }
 
   /* ---------- data shaping --------------------------------------------- */
@@ -195,6 +286,32 @@
     var headSlot = document.querySelector("#trend-controls");
     if (headSlot) {
       headSlot.innerHTML = "";
+
+      /* snapshot count — muted feedback, hidden when nothing is filtered */
+      var snapCount = document.createElement("span");
+      snapCount.id = "trend-snap-count";
+      snapCount.className = "trend-snap-count mono";
+      headSlot.appendChild(snapCount);
+
+      /* range presets */
+      headSlot.appendChild(seg("trend-rseg", [
+        { v: "7d",  label: "7d",  hint: "last 7 days" },
+        { v: "14d", label: "14d", hint: "last 14 days" },
+        { v: "30d", label: "30d", hint: "last 30 days" },
+        { v: "90d", label: "90d", hint: "last 90 days" },
+        { v: "all", label: "All", hint: "every retained snapshot" }
+      ], currentRangeKey(), function (v) {
+        if (v === "all") state.range = { kind: "all" };
+        else state.range = { kind: "preset", preset: v };
+        saveState();
+        syncRangeControls(container);
+        drawAll(container);
+      }));
+
+      /* custom "Last [N] [unit]" input — independent from the preset seg */
+      headSlot.appendChild(buildCustomInput(container));
+
+      /* y-axis mode + view mode (existing controls) */
       headSlot.appendChild(seg("trend-yseg", [
         { v: "auto", label: "Auto-fit", hint: "y-axis zooms to data range" },
         { v: "zero", label: "Zero",     hint: "y-axis anchored at 0" }
@@ -220,13 +337,6 @@
     main.id = "trend-main";
     container.appendChild(main);
 
-    /* zoom-mode pill (positioned absolutely inside .trend-main) */
-    var pill = document.createElement("div");
-    pill.className = "trend-pill";
-    pill.id = "trend-pill";
-    pill.hidden = true;
-    main.appendChild(pill);
-
     /* shared cursor-following tooltip for both charts */
     var tip = document.createElement("div");
     tip.className = "trend-tip";
@@ -240,17 +350,101 @@
     legend.id = "trend-legend";
     container.appendChild(legend);
 
-    /* delta panel */
+    /* delta panel — title says "since baseline" (not "since first scan")
+     * because under a filter the baseline is the first visible snapshot. */
     var deltaSec = document.createElement("div");
     deltaSec.className = "trend-delta";
     deltaSec.id = "trend-delta";
     deltaSec.innerHTML =
       '<div class="trend-delta-head">' +
-      '  <span class="trend-delta-title">Change since first scan</span>' +
+      '  <span class="trend-delta-title">Change since baseline</span>' +
       '  <span class="trend-delta-base mono" id="trend-delta-base"></span>' +
       "</div>" +
       '<div class="trend-delta-slot" id="trend-delta-slot"></div>';
     container.appendChild(deltaSec);
+  }
+
+  /* Maps the current state.range to the value of the preset segmented
+   * control: "7d"/"14d"/"30d"/"90d"/"all" for matching presets and "all",
+   * empty string when a custom/brush range is active (no preset highlighted). */
+  function currentRangeKey() {
+    var r = state.range || { kind: "all" };
+    if (r.kind === "all") return "all";
+    if (r.kind === "preset") return r.preset;
+    return ""; /* custom / brush -> no preset highlighted */
+  }
+
+  /* Builds the "Last [N] [d|w|m|y]" inline input. */
+  function buildCustomInput(container) {
+    var wrap = document.createElement("div");
+    wrap.className = "trend-custom";
+    var cur = state.range && state.range.kind === "custom"
+      ? state.range.custom
+      : { n: 30, unit: "d" };
+
+    wrap.innerHTML =
+      '<span class="trend-custom-lab">Last</span>' +
+      '<input type="number" min="1" max="999" step="1" inputmode="numeric"' +
+      '       class="trend-custom-n mono" value="' + cur.n + '"' +
+      '       aria-label="custom range value">' +
+      '<select class="trend-custom-u" aria-label="custom range unit">' +
+      '  <option value="d">d</option>' +
+      '  <option value="w">w</option>' +
+      '  <option value="m">m</option>' +
+      '  <option value="y">y</option>' +
+      "</select>";
+    var nEl = wrap.querySelector(".trend-custom-n");
+    var uEl = wrap.querySelector(".trend-custom-u");
+    uEl.value = cur.unit;
+
+    if (state.range && state.range.kind === "custom") {
+      wrap.classList.add("is-active");
+    }
+
+    function commit() {
+      var n = Math.max(1, Math.min(999, parseInt(nEl.value, 10) || 0));
+      if (!n) { nEl.value = cur.n; return; }
+      cur = { n: n, unit: uEl.value };
+      nEl.value = String(n);
+      state.range = { kind: "custom", custom: cur };
+      saveState();
+      syncRangeControls(container);
+      drawAll(container);
+    }
+    nEl.addEventListener("change", commit);
+    nEl.addEventListener("keydown", function (e) {
+      if (e.key === "Enter") { e.preventDefault(); commit(); nEl.blur(); }
+    });
+    uEl.addEventListener("change", commit);
+
+    return wrap;
+  }
+
+  /* Keep the range chips + custom input in sync with state.range — called
+   * after a brush selection or programmatic range change. */
+  function syncRangeControls(container) {
+    var key = currentRangeKey();
+    /* preset chips */
+    var rseg = document.querySelector(".trend-rseg");
+    if (rseg) {
+      Array.prototype.forEach.call(rseg.children, function (b) {
+        var on = b.dataset.value === key;
+        b.classList.toggle("is-active", on);
+        b.setAttribute("aria-selected", on ? "true" : "false");
+      });
+    }
+    /* custom input highlight */
+    var custom = document.querySelector(".trend-custom");
+    if (custom) {
+      custom.classList.toggle("is-active",
+        state.range && state.range.kind === "custom");
+      if (state.range && state.range.kind === "custom") {
+        var nEl = custom.querySelector(".trend-custom-n");
+        var uEl = custom.querySelector(".trend-custom-u");
+        if (nEl) nEl.value = String(state.range.custom.n);
+        if (uEl) uEl.value = state.range.custom.unit;
+      }
+    }
   }
 
   /* Build a small segmented control. opts = [{v, label, hint}, ...] */
@@ -301,10 +495,7 @@
 
   function drawMain(container, data) {
     var slot = container.querySelector("#trend-main");
-    /* preserve the pill node across re-renders */
-    var pill = slot.querySelector("#trend-pill");
     slot.querySelectorAll("svg").forEach(function (n) { n.remove(); });
-    pill.hidden = true;
 
     var iw = W - m.left - m.right,
         ih = H_MAIN - m.top - m.bottom;
@@ -411,28 +602,10 @@
       drawStacked(g, data, visible, x, y, iw, ih, container);
     }
 
-    /* zoom pill — show range when y-axis is non-zero */
-    if (state.yMode === "auto" && state.viewMode !== "stacked") {
-      var poolForPill = state.viewMode === "total"
-        ? data.total
-        : (function () {
-            var arr = [];
-            visible.forEach(function (r) {
-              r.values.forEach(function (v) { if (v != null) arr.push(v); });
-            });
-            return arr.length ? arr : [0];
-          })();
-      var lo2 = d3.min(poolForPill), hi2 = d3.max(poolForPill);
-      /* use span as the step so endpoints always render distinguishably,
-       * e.g. "91.04T – 91.21T" instead of "1.9T – 1.9T". */
-      var pStep = (hi2 - lo2) || (hi2 * 0.01) || 1;
-      var pRef = Math.max(Math.abs(lo2), Math.abs(hi2));
-      pill.textContent =
-        U.humanBytesAtStep(lo2, pStep, pRef) +
-        " – " +
-        U.humanBytesAtStep(hi2, pStep, pRef);
-      pill.hidden = false;
-    }
+    /* brush layer — must sit ABOVE the data so it captures all pointer
+     * events on the plot area. The end handler distinguishes click vs drag
+     * to preserve the existing "click opens that scan" behaviour. */
+    attachBrush(g, data, x, iw, ih, container);
 
     /* counter-scale axis labels so they stay at their px size regardless of
      * the rendered chart width (the viewBox would otherwise magnify them). */
@@ -472,28 +645,21 @@
         .y(function (p) { return y(p.size); })
         .curve(d3.curveMonotoneX));
 
+    /* Dots are now purely visual — interaction (click/hover) is delegated
+     * to the unified brush layer added later in drawMain. This keeps the
+     * click semantics consistent across all three view modes. */
     var dots = g.selectAll("g.trend-dot").data(pts).enter().append("g")
       .attr("class", "trend-dot")
-      .attr("transform", function (p) { return "translate(" + x(p.date) + "," + y(p.size) + ")"; })
-      .style("cursor", "pointer")
-      .attr("tabindex", 0)
-      .attr("role", "link")
-      .attr("aria-label", function (p) {
-        return data.labels[p.i] + " — " + U.humanBytes(p.size) + ". Open scan.";
-      });
-    dots.append("circle").attr("class", "trend-hit").attr("r", 15);
+      .attr("transform", function (p) { return "translate(" + x(p.date) + "," + y(p.size) + ")"; });
     dots.append("circle").attr("class", "trend-pt").attr("r", 4);
 
-    function go(p) { global.location.hash = "#/scan/" + encodeURIComponent(data.ts[p.i]); }
-    dots.on("click", function (e, p) { go(p); });
-    dots.on("keydown", function (e, p) {
-      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(p); }
-    });
-
-    /* tooltip: cursor-following, with delta-to-previous */
+    /* Hover callback consumed by attachBrush — renders the total-mode
+     * tooltip (with delta-to-previous) at the nearest x. */
     var tip = container.querySelector("#trend-tip");
-    dots.on("mouseenter focus", function (e, p) {
-      var prev = p.i > 0 ? data.total[p.i - 1] : null;
+    container.__hoverFn = function (mx, event) {
+      var i = d3.bisectCenter(data.dates.map(function (d) { return +d; }), +x.invert(mx));
+      var p = pts[i];
+      var prev = i > 0 ? data.total[i - 1] : null;
       var dHtml = "";
       if (prev != null) {
         var d = p.size - prev;
@@ -503,13 +669,13 @@
         }
       }
       tip.innerHTML =
-        '<div class="trend-tip-lab">' + U.esc(data.labels[p.i]) + "</div>" +
+        '<div class="trend-tip-lab">' + U.esc(data.labels[i]) + "</div>" +
         '<div class="trend-tip-val mono">' + U.esc(U.humanBytes(p.size)) + dHtml + "</div>" +
-        '<div class="trend-tip-hint">click to open scan</div>';
+        '<div class="trend-tip-hint">click to open · drag to zoom</div>';
       tip.style.display = "block";
-    })
-    .on("mousemove", function (e) { positionTip(container, tip, e); })
-    .on("mouseleave blur", function () { tip.style.display = "none"; });
+      positionTip(container, tip, event);
+    };
+    container.__hoverLeaveFn = function () { tip.style.display = "none"; };
   }
 
   /* ---- lines view: per-root + faint total overlay + crosshair ---- */
@@ -567,77 +733,65 @@
     crosshair(g, data, visible, x, y, iw, ih, container, true);
   }
 
-  /* ---- crosshair shared by lines + stacked ---- */
+  /* ---- crosshair shared by lines + stacked ----
+   * Sets up the rule + marks groups and exposes a hover callback consumed
+   * by attachBrush. All pointer events arrive via the brush layer. */
   function crosshair(g, data, visible, x, y, iw, ih, container, isStacked) {
     var rule = g.append("line").attr("class", "trend-crosshair")
       .attr("y1", 0).attr("y2", ih).style("display", "none");
     var marks = g.append("g").attr("class", "trend-marks");
-
     var tip = container.querySelector("#trend-tip");
 
-    g.append("rect").attr("class", "trend-hot")
-      .attr("width", iw).attr("height", ih)
-      .style("fill", "none").style("pointer-events", "all")
-      .on("pointerenter", function () { rule.style("display", null); })
-      .on("pointerleave", function () {
-        rule.style("display", "none");
-        marks.selectAll("*").remove();
-        tip.style.display = "none";
-      })
-      .on("pointermove", function (event) {
-        var mx = d3.pointer(event)[0];
-        var i = d3.bisectCenter(
-          data.dates.map(function (d) { return +d; }),
-          +x.invert(mx)
-        );
-        rule.attr("x1", x(data.dates[i])).attr("x2", x(data.dates[i]));
+    container.__hoverFn = function (mx, event) {
+      var i = d3.bisectCenter(
+        data.dates.map(function (d) { return +d; }),
+        +x.invert(mx)
+      );
+      rule.attr("x1", x(data.dates[i])).attr("x2", x(data.dates[i]))
+          .style("display", null);
 
-        /* mark dots at hovered x */
-        var hits = visible
-          .map(function (r) { return { path: r.path, v: r.values[i] }; })
-          .filter(function (h) { return h.v != null; })
-          .sort(function (a, b) { return b.v - a.v; });
+      /* mark dots at hovered x */
+      var hits = visible
+        .map(function (r) { return { path: r.path, v: r.values[i] }; })
+        .filter(function (h) { return h.v != null; })
+        .sort(function (a, b) { return b.v - a.v; });
 
-        marks.selectAll("*").remove();
-        if (!isStacked) {
-          hits.forEach(function (h) {
-            marks.append("circle")
-              .attr("class", "trend-pt-multi")
-              .attr("r", 3.5)
-              .attr("cx", x(data.dates[i]))
-              .attr("cy", y(h.v))
-              .attr("fill", assignColor(h.path));
-          });
-        }
+      marks.selectAll("*").remove();
+      if (!isStacked) {
+        hits.forEach(function (h) {
+          marks.append("circle")
+            .attr("class", "trend-pt-multi")
+            .attr("r", 3.5)
+            .attr("cx", x(data.dates[i]))
+            .attr("cy", y(h.v))
+            .attr("fill", assignColor(h.path));
+        });
+      }
 
-        /* tooltip listing visible series + total */
-        var rowsHtml = hits.slice(0, 8).map(function (h) {
-          return '<div class="trend-tip-row">' +
-            '<span class="trend-tip-sw" style="background:' + assignColor(h.path) + '"></span>' +
-            '<span class="trend-tip-path">' + U.esc(U.shortPath(h.path, 32)) + '</span>' +
-            '<span class="trend-tip-sz mono">' + U.esc(U.humanBytes(h.v)) + '</span>' +
-            '</div>';
-        }).join("");
-        var sumVisible = hits.reduce(function (s, h) { return s + h.v; }, 0);
-        tip.innerHTML =
-          '<div class="trend-tip-lab">' + U.esc(data.labels[i]) + "</div>" +
-          rowsHtml +
-          '<div class="trend-tip-row trend-tip-sum">' +
-            '<span class="trend-tip-sw" style="background:transparent;border:1px solid var(--accent)"></span>' +
-            '<span class="trend-tip-path">' + (isStacked ? "Stack total" : "Visible total") + '</span>' +
-            '<span class="trend-tip-sz mono">' + U.esc(U.humanBytes(sumVisible)) + '</span>' +
+      var rowsHtml = hits.slice(0, 8).map(function (h) {
+        return '<div class="trend-tip-row">' +
+          '<span class="trend-tip-sw" style="background:' + assignColor(h.path) + '"></span>' +
+          '<span class="trend-tip-path">' + U.esc(U.shortPath(h.path, 32)) + '</span>' +
+          '<span class="trend-tip-sz mono">' + U.esc(U.humanBytes(h.v)) + '</span>' +
           '</div>';
-        tip.style.display = "block";
-        positionTip(container, tip, event);
-      })
-      .on("click", function (event) {
-        var mx = d3.pointer(event)[0];
-        var i = d3.bisectCenter(
-          data.dates.map(function (d) { return +d; }),
-          +x.invert(mx)
-        );
-        global.location.hash = "#/scan/" + encodeURIComponent(data.ts[i]);
-      });
+      }).join("");
+      var sumVisible = hits.reduce(function (s, h) { return s + h.v; }, 0);
+      tip.innerHTML =
+        '<div class="trend-tip-lab">' + U.esc(data.labels[i]) + "</div>" +
+        rowsHtml +
+        '<div class="trend-tip-row trend-tip-sum">' +
+          '<span class="trend-tip-sw" style="background:transparent;border:1px solid var(--accent)"></span>' +
+          '<span class="trend-tip-path">' + (isStacked ? "Stack total" : "Visible total") + '</span>' +
+          '<span class="trend-tip-sz mono">' + U.esc(U.humanBytes(sumVisible)) + '</span>' +
+        '</div>';
+      tip.style.display = "block";
+      positionTip(container, tip, event);
+    };
+    container.__hoverLeaveFn = function () {
+      rule.style("display", "none");
+      marks.selectAll("*").remove();
+      tip.style.display = "none";
+    };
   }
 
   function positionTip(container, tip, e) {
@@ -648,6 +802,124 @@
     if (tx + tw + 8 > r.width) tx = e.clientX - r.left - tw - 8;
     tip.style.left = Math.max(4, tx) + "px";
     tip.style.top = Math.max(4, ty) + "px";
+  }
+
+  /* ---------- brush layer ---------------------------------------------- *
+   * One transparent rect on top of the data captures all pointer events
+   * on the plot area and dispatches them to:
+   *   - hover (no mousedown) → __hoverFn (view-specific tooltip render)
+   *   - click (mousedown + up, no significant drag) → open nearest scan
+   *   - drag (mousedown + move > threshold + up) → set brush range
+   *   - dblclick → reset to "All" (only if a brush/custom range is active)
+   * This unifies interaction across total / lines / stacked view modes. */
+  var DRAG_THRESHOLD = 4; /* px before a click becomes a drag */
+
+  function attachBrush(g, data, x, iw, ih, container) {
+    var brushG = g.append("g").attr("class", "trend-brush");
+
+    /* selection rect — drawn during drag, hidden otherwise */
+    var sel = brushG.append("rect")
+      .attr("class", "trend-brush-sel")
+      .attr("y", 0).attr("height", ih)
+      .attr("x", 0).attr("width", 0)
+      .style("display", "none")
+      .style("pointer-events", "none");
+
+    /* the actual interaction surface — sits above everything */
+    var hot = brushG.append("rect")
+      .attr("class", "trend-brush-hot")
+      .attr("width", iw).attr("height", ih)
+      .style("fill", "none")
+      .style("pointer-events", "all");
+
+    var down = null;       /* [x,y] at mousedown, null when idle */
+    var dragging = false;
+    var hotNode = hot.node();
+
+    /* d3.pointer walks getScreenCTM, so it returns user-space coords inside
+     * the inner g (where the rect lives at (0,0)..(iw,ih)) — exactly what
+     * the x scale expects without further conversion. */
+    function localPointer(event) {
+      return d3.pointer(event, hotNode);
+    }
+
+    function nearestIndex(mx) {
+      return d3.bisectCenter(
+        data.dates.map(function (d) { return +d; }),
+        +x.invert(mx)
+      );
+    }
+
+    hot.on("pointermove", function (event) {
+      var p = localPointer(event);
+      if (down) {
+        if (!dragging && Math.abs(p[0] - down[0]) > DRAG_THRESHOLD) {
+          dragging = true;
+          if (container.__hoverLeaveFn) container.__hoverLeaveFn();
+        }
+        if (dragging) {
+          var lo = Math.max(0, Math.min(down[0], p[0]));
+          var hi = Math.min(iw, Math.max(down[0], p[0]));
+          sel.attr("x", lo).attr("width", hi - lo).style("display", null);
+        }
+      } else if (container.__hoverFn) {
+        container.__hoverFn(p[0], event);
+      }
+    });
+
+    hot.on("pointerdown", function (event) {
+      if (event.button !== 0) return;
+      down = localPointer(event);
+      dragging = false;
+      try { hotNode.setPointerCapture(event.pointerId); } catch (_) {}
+    });
+
+    hot.on("pointerup", function (event) {
+      if (!down) return;
+      try { hotNode.releasePointerCapture(event.pointerId); } catch (_) {}
+      var p = localPointer(event);
+      if (dragging) {
+        var lo = Math.max(0, Math.min(down[0], p[0]));
+        var hi = Math.min(iw, Math.max(down[0], p[0]));
+        sel.style("display", "none");
+        if (hi - lo >= DRAG_THRESHOLD) {
+          var t0 = x.invert(lo), t1 = x.invert(hi);
+          state.range = {
+            kind: "brush",
+            brush: [t0.toISOString(), t1.toISOString()]
+          };
+          saveState();
+          syncRangeControls(container);
+          drawAll(container);
+        }
+      } else {
+        /* click without drag → open nearest scan */
+        var i = nearestIndex(p[0]);
+        global.location.hash = "#/scan/" + encodeURIComponent(data.ts[i]);
+      }
+      down = null;
+      dragging = false;
+    });
+
+    hot.on("pointerleave", function () {
+      if (down) return; /* keep selection visible while dragging out */
+      if (container.__hoverLeaveFn) container.__hoverLeaveFn();
+    });
+    hot.on("pointercancel", function () {
+      sel.style("display", "none");
+      down = null;
+      dragging = false;
+    });
+
+    hot.on("dblclick", function (event) {
+      event.preventDefault();
+      if (state.range && (state.range.kind === "brush" || state.range.kind === "custom")) {
+        state.range = { kind: "all" };
+        saveState();
+        syncRangeControls(container);
+        drawAll(container);
+      }
+    });
   }
 
   /* ---------- chip legend ---------------------------------------------- */
@@ -875,12 +1147,29 @@
   /* ---------- orchestration ------------------------------------------- */
 
   function drawAll(container) {
-    /* read data from the data attribute we stashed at first render */
-    var data = container.__trendsData;
-    if (!data) return;
+    /* read raw data, then narrow to the active range — the rest of the
+     * pipeline (main, legend, delta) sees only the filtered slice and
+     * therefore the Δ baseline tracks the *visible* first point. */
+    var raw = container.__trendsData;
+    if (!raw) return;
+    var data = applyRange(raw);
+    updateSnapCount(container, raw, data);
     drawMain(container, data);
     drawLegend(container, data);
     drawDelta(container, data);
+  }
+
+  function updateSnapCount(container, raw, filtered) {
+    var el = container.querySelector("#trend-snap-count");
+    if (!el) return;
+    if (filtered.dates.length === raw.dates.length) {
+      el.textContent = raw.dates.length + " snapshots";
+      el.classList.remove("is-active");
+    } else {
+      el.textContent =
+        filtered.dates.length + " of " + raw.dates.length + " snapshots";
+      el.classList.add("is-active");
+    }
   }
 
   function render(container, snapshots) {

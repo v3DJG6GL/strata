@@ -2262,24 +2262,102 @@ button {
   box-shadow: inset 0 0 0 1px var(--border-soft);
 }
 
-/* main chart wrapper — pill needs positioning context */
+/* main chart wrapper */
 .trend-main {
   position: relative;
 }
-.trend-pill {
-  position: absolute;
-  top: 6px;
-  right: 10px;
-  z-index: 2;
+
+/* let the section-head-right wrap on narrow viewports — with 3 segmented
+ * controls + custom input + snap-count it would otherwise overflow */
+.section-head-right {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+/* snapshot count — small muted text next to the controls */
+.trend-snap-count {
   font-family: var(--mono);
   font-size: 11px;
-  color: var(--accent);
-  background: rgba(88, 166, 255, 0.10);
-  border: 1px solid rgba(88, 166, 255, 0.32);
-  padding: 2px 8px;
-  border-radius: 999px;
+  color: var(--dim);
   letter-spacing: 0.02em;
-  pointer-events: none;
+  white-space: nowrap;
+}
+.trend-snap-count.is-active {
+  color: var(--accent);
+}
+
+/* "Last [N] [d|w|m|y]" custom range input */
+.trend-custom {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 2px 8px;
+  height: 26px;
+  transition: border-color 0.14s, background 0.14s;
+}
+.trend-custom.is-active {
+  background: var(--panel-hi);
+  border-color: var(--border-soft);
+  box-shadow: inset 0 0 0 1px var(--border-soft);
+}
+.trend-custom-lab {
+  font-family: var(--sans);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  color: var(--dim);
+}
+.trend-custom-n {
+  background: transparent;
+  border: 0;
+  color: var(--text-bright);
+  font-family: var(--mono);
+  font-size: 11px;
+  width: 40px;
+  text-align: center;
+  outline: none;
+  padding: 0;
+  -moz-appearance: textfield;
+}
+.trend-custom-n::-webkit-outer-spin-button,
+.trend-custom-n::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.trend-custom-n:focus {
+  color: var(--accent);
+}
+.trend-custom-u {
+  background: transparent;
+  border: 0;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 11px;
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  padding: 0 2px;
+}
+.trend-custom-u:focus {
+  color: var(--accent);
+}
+
+/* drag-to-zoom selection rect + crosshair cursor */
+.trend-brush-hot {
+  cursor: ew-resize;
+}
+.trend-brush-sel {
+  fill: var(--accent);
+  fill-opacity: 0.10;
+  stroke: var(--accent);
+  stroke-opacity: 0.55;
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
 }
 
 /* "axis is zoomed" affordances */
