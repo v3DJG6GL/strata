@@ -282,6 +282,9 @@ def hardlink_copies():
 
 def run_index(scan_paths, priority, copies, progress_path=None):
     """Walk every scan path. Returns the detail-tree root node (dict)."""
+    # _walk / _finalize / _to_node all recurse with the filesystem; lift the
+    # guard here so embedding callers inherit it, not just the CLI entry.
+    sys.setrecursionlimit(max(sys.getrecursionlimit(), 20000))
     root = Dir("(scan)", None, 0)
     hardlinks = {}
     ctr = [0, 0]  # [files, dirs]
@@ -373,7 +376,6 @@ def main(argv):
         sys.stderr.write("indexer: STRATA_SCAN_PATHS is empty\n")
         return 1
 
-    sys.setrecursionlimit(20000)
     detail, totals = run_index(
         scan_paths, hardlink_priority(), hardlink_copies(), progress
     )

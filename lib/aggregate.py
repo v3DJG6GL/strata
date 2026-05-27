@@ -55,26 +55,29 @@ def _aggregate(node, opts, depth, root_total):
     if not kids:
         return out
 
-    folded = [_aggregate(c, opts, depth + 1, root_total) for c in kids]
-    folded.sort(key=lambda k: k["size_actual"], reverse=True)
-
+    # Partition raw kids first; folding a child only to drop it into the
+    # "(other)" bucket would discard the entire recursion below it. size_actual
+    # is already final on the raw node (summed bottom-up by the indexer).
     floor = root_total * opts["min_size_ratio"]
-    keep, rest = [], []
-    for i, k in enumerate(folded):
-        if i < opts["max_children"] and k["size_actual"] >= floor:
-            keep.append(k)
+    ranked = sorted(kids, key=lambda c: c.get("size_actual", 0) or 0, reverse=True)
+    keep_raw, rest_raw = [], []
+    for i, c in enumerate(ranked):
+        if i < opts["max_children"] and (c.get("size_actual", 0) or 0) >= floor:
+            keep_raw.append(c)
         else:
-            rest.append(k)
-    if len(rest) == 1:  # a lone leftover is not worth an "(other)" bucket
-        keep.append(rest.pop())
+            rest_raw.append(c)
+    if len(rest_raw) == 1:  # a lone leftover is not worth an "(other)" bucket
+        keep_raw.append(rest_raw.pop())
 
-    if rest:
+    keep = [_aggregate(c, opts, depth + 1, root_total) for c in keep_raw]
+
+    if rest_raw:
         bucket = {
-            "name": "(other)", "other": True, "other_dirs": len(rest),
+            "name": "(other)", "other": True, "other_dirs": len(rest_raw),
             "path": node.get("path"), "truncated": True, "children": [],
         }
         for f in _SUM_FIELDS:
-            bucket[f] = sum(k.get(f, 0) for k in rest)
+            bucket[f] = sum((c.get(f, 0) or 0) for c in rest_raw)
         keep.append(bucket)
         out["truncated"] = True
 
