@@ -1280,9 +1280,6 @@ button {
   .snap-card-metrics {
     grid-template-columns: repeat(2, 1fr);
   }
-  .sb-details-summary {
-    grid-template-columns: repeat(3, 1fr);
-  }
 }
 
 /* ╔═══════════════════════════════════════════════════════════════════════╗
