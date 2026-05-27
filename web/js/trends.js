@@ -436,8 +436,11 @@
     }
 
     function commit() {
-      var n = Math.max(1, Math.min(999, parseInt(nEl.value, 10) || 0));
-      if (!n) { nEl.value = cur.n; return; }
+      var raw = parseInt(nEl.value, 10);
+      /* Empty / non-numeric / zero / negative → revert to the previously
+       * committed value instead of silently committing "Last 1 ...". */
+      if (!Number.isFinite(raw) || raw < 1) { nEl.value = cur.n; return; }
+      var n = Math.min(999, raw);
       cur = { n: n, unit: uEl.value };
       nEl.value = String(n);
       state.range = { kind: "custom", custom: cur };
