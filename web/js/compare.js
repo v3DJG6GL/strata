@@ -351,10 +351,24 @@
     state.sb = null;
   }
 
-  /* Re-render everything that depends on the metric WITHOUT re-fetching. */
+  /* Re-render only the metric-dependent sections (summary, sunburst, table).
+   * The scan selectors don't change shape when the metric toggles, so
+   * rebuilding them costs a snapshot-list iteration for nothing and would
+   * also tear down any open <select> menu mid-interaction. */
   function rerenderMetric(state) {
     computeThresholdCeiling(state);
-    buildPage(state);
+    var slot = state.container.querySelector("#cmp-body");
+    if (!slot) return;
+    destroySunburstSafe(state);
+    var replacements = [
+      [".cmp-summary", buildSummary(state)],
+      [".cmp-chart-section", buildSunburstSection(state)],
+      [".cmp-table-section", buildTableSection(state)]
+    ];
+    replacements.forEach(function (pair) {
+      var prev = slot.querySelector(pair[0]);
+      if (prev && prev.parentNode) prev.parentNode.replaceChild(pair[1], prev);
+    });
   }
 
   /* ----------------------------------------------------------------------- *
@@ -413,18 +427,24 @@
     metricWrap.appendChild(mLabel);
 
     var toggle = el("div", "cmp-toggle");
+    var toggleBtns = [];
     ["actual", "apparent", "count"].forEach(function (k) {
       var m = METRICS[k];
       var b = el("button");
       b.type = "button";
       b.textContent = m.label;
+      b.dataset.metric = k;
       if (state.metric.key === k) b.classList.add("active");
       b.addEventListener("click", function () {
         if (state.metric.key === k) return;
         state.metric = m;
+        toggleBtns.forEach(function (other) {
+          other.classList.toggle("active", other === b);
+        });
         rerenderMetric(state); // no re-fetch — pure re-render
       });
       toggle.appendChild(b);
+      toggleBtns.push(b);
     });
     metricWrap.appendChild(toggle);
     wrap.appendChild(metricWrap);
