@@ -61,7 +61,9 @@ run_scan() {
     fi
   else
     log "scan $ts failed (rc=$rc) -- discarding partial artifacts"
-    rm -f "$DB_DIR/strata-$ts".*
+    # Guard the glob: if $ts ever ended up empty (date failure under set -u),
+    # `strata-.*` would match every snapshot in the directory.
+    [ -n "$ts" ] && rm -f "$DB_DIR/strata-$ts".*
   fi
 
   rm -f "$CURRENT_JSON" "$SAMPLES"
@@ -104,7 +106,13 @@ else
 fi
 
 while true; do
+  iter_start=$(date +%s)
   run_scan
   prune
-  sleep "$INTERVAL"
+  # Subtract the time spent scanning so the cadence stays at INTERVAL --
+  # otherwise a 6h scan with a 24h interval drifts the next start by 6h
+  # every cycle. Clamp to 0 if a scan ran longer than the interval.
+  elapsed=$(( $(date +%s) - iter_start ))
+  remain=$(( INTERVAL - elapsed ))
+  [ "$remain" -gt 0 ] && sleep "$remain"
 done
