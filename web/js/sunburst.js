@@ -1217,7 +1217,7 @@
       spinnerRing.attr("r", radius * (ringCount + 1) * 0.92);
     }
 
-    toolbar.addEventListener("click", function (e) {
+    function onToolbarClick(e) {
       var btn = e.target.closest("button[data-g]");
       if (!btn) return;
       var group = btn.getAttribute("data-g");
@@ -1245,15 +1245,28 @@
          * whole row, not just the chart column. */
         layout.classList.toggle("sb-layout-wide", value === "full");
       }
-    });
+    }
+    toolbar.addEventListener("click", onToolbarClick);
 
+    var destroyed = false;
     return {
       setData: setData,
       focusByPath: focusByPath,
       destroy: function () {
+        /* Compare mode rebuilds Sunburst instances on every metric/sort
+         * toggle; without this teardown the document.body-attached tip,
+         * the toolbar listener, and any in-flight fetchSubtree promise
+         * accumulate across mounts. */
+        if (destroyed) return;
+        destroyed = true;
         if (tip && tip.parentNode) tip.parentNode.removeChild(tip);
         resizeObs.disconnect();
         cancelAnimationFrame(roRaf);
+        toolbar.removeEventListener("click", onToolbarClick);
+        if (svg && svg.node() && svg.node().parentNode) {
+          svg.node().parentNode.removeChild(svg.node());
+        }
+        pendingFetch = {};
       }
     };
   }
