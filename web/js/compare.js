@@ -20,7 +20,10 @@
   "use strict";
 
   var U = global.Util;
-  var API = "cgi-bin/api.cgi";
+  /* API + spinner/errorBox live in util.js (shared with app.js). */
+  var apiGet = U.apiGet;
+  var spinner = U.spinnerEl;
+  var errorBox = U.errorBox;
 
   /* ---- metric definitions ----------------------------------------------- *
    * The metric toggle swaps which family of numbers drives colours, table
@@ -111,55 +114,6 @@
   function dirClass(v) {
     v = num(v);
     return v > 0 ? "up" : v < 0 ? "down" : "flat";
-  }
-
-  /* ---- shared UI fragments (mirrors app.js style) ----------------------- */
-  function spinner(label) {
-    var d = el("div", "loading");
-    d.innerHTML =
-      '<div class="spin"></div><span>' + U.esc(label || "Loading…") + "</span>";
-    return d;
-  }
-
-  function errorBox(msg, retryFn) {
-    var box = el("div", "errbox");
-    box.innerHTML =
-      '<div class="errbox-icon">!</div>' +
-      '<div class="errbox-body">' +
-      '<div class="errbox-title">Something went wrong</div>' +
-      '<div class="errbox-msg">' +
-      U.esc(msg) +
-      "</div></div>";
-    if (retryFn) {
-      var btn = el("button", "btn");
-      btn.type = "button";
-      btn.textContent = "Retry";
-      btn.addEventListener("click", retryFn);
-      box.appendChild(btn);
-    }
-    return box;
-  }
-
-  /* ---- API layer -------------------------------------------------------- *
-   * Every endpoint returns application/json; failures come back as
-   * {"error":"..."} with HTTP 200 — so we always inspect `.error`. */
-  function apiGet(op, params) {
-    var qs = "op=" + encodeURIComponent(op);
-    if (params) {
-      Object.keys(params).forEach(function (k) {
-        if (params[k] != null)
-          qs += "&" + k + "=" + encodeURIComponent(params[k]);
-      });
-    }
-    return fetch(API + "?" + qs, { headers: { Accept: "application/json" } })
-      .then(function (res) {
-        if (!res.ok) throw new Error("HTTP " + res.status);
-        return res.json();
-      })
-      .then(function (json) {
-        if (json && json.error) throw new Error(json.error);
-        return json;
-      });
   }
 
   /* ======================================================================= *

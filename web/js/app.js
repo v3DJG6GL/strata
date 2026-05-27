@@ -14,29 +14,11 @@
   "use strict";
 
   var U = global.Util;
-  var API = "cgi-bin/api.cgi";
-
-  /* ---- API layer -------------------------------------------------------- */
-  /* All endpoints return application/json; errors come back as
-   * {"error": "..."} with HTTP 200, so every call must check `.error`. */
-  function apiGet(op, params) {
-    var qs = "op=" + encodeURIComponent(op);
-    if (params) {
-      Object.keys(params).forEach(function (k) {
-        if (params[k] != null)
-          qs += "&" + k + "=" + encodeURIComponent(params[k]);
-      });
-    }
-    return fetch(API + "?" + qs, { headers: { Accept: "application/json" } })
-      .then(function (res) {
-        if (!res.ok) throw new Error("HTTP " + res.status);
-        return res.json();
-      })
-      .then(function (json) {
-        if (json && json.error) throw new Error(json.error);
-        return json;
-      });
-  }
+  /* API helpers + spinner/errorBox fragments live in util.js so the compare
+   * page and the dashboard can't drift on the same response contract. */
+  var apiGet = U.apiGet;
+  var spinner = U.spinnerHTML;
+  var errorBox = U.errorBox;
 
   /* ---- DOM root --------------------------------------------------------- */
   var appEl = document.getElementById("app");
@@ -44,35 +26,6 @@
   /* Live-scan polling handle for the dashboard. */
   var pollTimer = null;
   var lastScanning = null;
-
-  /* ---- shared UI fragments --------------------------------------------- */
-  function spinner(label) {
-    return (
-      '<div class="loading"><div class="spin"></div><span>' +
-      U.esc(label || "Loading…") +
-      "</span></div>"
-    );
-  }
-
-  function errorBox(msg, retryFn) {
-    var box = document.createElement("div");
-    box.className = "errbox";
-    box.innerHTML =
-      '<div class="errbox-icon">!</div>' +
-      '<div class="errbox-body">' +
-      '<div class="errbox-title">Something went wrong</div>' +
-      '<div class="errbox-msg">' +
-      U.esc(msg) +
-      "</div></div>";
-    if (retryFn) {
-      var btn = document.createElement("button");
-      btn.className = "btn";
-      btn.textContent = "Retry";
-      btn.addEventListener("click", retryFn);
-      box.appendChild(btn);
-    }
-    return box;
-  }
 
   function header() {
     return (

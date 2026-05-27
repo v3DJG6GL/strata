@@ -182,6 +182,69 @@
     return "/" + parts[0] + "/…/" + tail;
   }
 
+  /* ---- shared API + UI fragments --------------------------------------
+   * The dashboard and the compare page both poll the same CGI endpoint
+   * and need the same spinner / error-box fragments; kept here so the two
+   * pages can't drift in their error-handling contract. */
+  var API = "cgi-bin/api.cgi";
+
+  /* All endpoints return application/json; errors come back as
+   * {"error": "..."} with HTTP 200, so every call must check `.error`. */
+  function apiGet(op, params) {
+    var qs = "op=" + encodeURIComponent(op);
+    if (params) {
+      Object.keys(params).forEach(function (k) {
+        if (params[k] != null)
+          qs += "&" + k + "=" + encodeURIComponent(params[k]);
+      });
+    }
+    return fetch(API + "?" + qs, { headers: { Accept: "application/json" } })
+      .then(function (res) {
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        return res.json();
+      })
+      .then(function (json) {
+        if (json && json.error) throw new Error(json.error);
+        return json;
+      });
+  }
+
+  /* spinner markup, used both as a string in larger innerHTML templates and
+   * as a DOM node via spinnerEl(). One source of truth for the class names. */
+  function spinnerHTML(label) {
+    return (
+      '<div class="loading"><div class="spin"></div><span>' +
+      esc(label || "Loading…") +
+      "</span></div>"
+    );
+  }
+
+  function spinnerEl(label) {
+    var d = document.createElement("div");
+    d.innerHTML = spinnerHTML(label);
+    return d.firstChild;
+  }
+
+  function errorBox(msg, retryFn) {
+    var box = document.createElement("div");
+    box.className = "errbox";
+    box.innerHTML =
+      '<div class="errbox-icon">!</div>' +
+      '<div class="errbox-body">' +
+      '<div class="errbox-title">Something went wrong</div>' +
+      '<div class="errbox-msg">' +
+      esc(msg) +
+      "</div></div>";
+    if (retryFn) {
+      var btn = document.createElement("button");
+      btn.className = "btn";
+      btn.textContent = "Retry";
+      btn.addEventListener("click", retryFn);
+      box.appendChild(btn);
+    }
+    return box;
+  }
+
   /* Measure a string's rendered width via an offscreen 2-D canvas. `fontPx`
    * is the font size in whatever units the caller is working in (the result
    * comes back in the same units). Used to fit chart labels precisely. */
@@ -212,6 +275,11 @@
     orDash: orDash,
     esc: esc,
     shortPath: shortPath,
-    textWidth: textWidth
+    textWidth: textWidth,
+    API: API,
+    apiGet: apiGet,
+    spinnerHTML: spinnerHTML,
+    spinnerEl: spinnerEl,
+    errorBox: errorBox
   };
 })(window);
