@@ -267,7 +267,17 @@
       b.setAttribute("title", o.hint);
       b.dataset.value = o.v;
       b.textContent = o.label;
-      b.addEventListener("click", function () { onPick(o.v); });
+      b.addEventListener("click", function () {
+        /* sync sibling button state before delegating — the click handler
+         * triggers a chart re-render but not a controls rebuild, so the
+         * buttons would otherwise keep their initial highlight. */
+        Array.prototype.forEach.call(wrap.children, function (sib) {
+          var on = sib.dataset.value === o.v;
+          sib.classList.toggle("is-active", on);
+          sib.setAttribute("aria-selected", on ? "true" : "false");
+        });
+        onPick(o.v);
+      });
       b.addEventListener("keydown", function (e) {
         if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
         e.preventDefault();
@@ -333,7 +343,13 @@
         domain = [Math.max(0, lo - pad), hi + pad];
       }
     }
-    var y = d3.scaleLinear().domain(domain).nice().range([ih, 0]);
+    /* d3's tick *count* is only a hint, and bare .nice() uses a different
+     * count internally — that's why a zero-anchored ~91 T domain could
+     * produce just 3 ticks. Passing the SAME hint to both nice() and
+     * ticks() keeps their step computations in sync and reliably yields
+     * 5–7 ticks across both wide and narrow domains. */
+    var Y_HINT = 6;
+    var y = d3.scaleLinear().domain(domain).nice(Y_HINT).range([ih, 0]);
 
     var svg = d3.select(slot).append("svg")
       .attr("class", "trend-svg")
@@ -342,7 +358,16 @@
     var g = svg.append("g").attr("transform", "translate(" + m.left + "," + m.top + ")");
 
     /* gridlines */
-    var yticks = y.ticks(4);
+    var yticks = y.ticks(Y_HINT);
+    /* derive step + axis-max for adaptive precision: narrow domains like
+     * [91.04T, 91.21T] would all read "91.2T" at 1-decimal precision —
+     * humanBytesAtStep picks just enough decimals to distinguish ticks. */
+    var yStep = yticks.length > 1
+      ? yticks[1] - yticks[0]
+      : (yticks[0] || 1);
+    var yRef = yticks.length
+      ? Math.max.apply(null, yticks.map(function (d) { return Math.abs(d); }))
+      : 1;
     g.selectAll("line.trend-grid").data(yticks).enter().append("line")
       .attr("class", "trend-grid")
       .attr("x1", 0).attr("x2", iw)
@@ -359,7 +384,7 @@
       .attr("y", function (d) { return y(d); })
       .attr("dy", "0.32em")
       .attr("text-anchor", "end")
-      .text(function (d) { return U.humanBytes(d); });
+      .text(function (d) { return U.humanBytesAtStep(d, yStep, yRef); });
 
     /* dashed baseline marker when the axis is non-zero */
     if (state.yMode === "auto" && state.viewMode !== "stacked" && loDom > 0) {
@@ -398,7 +423,14 @@
             return arr.length ? arr : [0];
           })();
       var lo2 = d3.min(poolForPill), hi2 = d3.max(poolForPill);
-      pill.textContent = U.humanBytes(lo2) + " – " + U.humanBytes(hi2);
+      /* use span as the step so endpoints always render distinguishably,
+       * e.g. "91.04T – 91.21T" instead of "1.9T – 1.9T". */
+      var pStep = (hi2 - lo2) || (hi2 * 0.01) || 1;
+      var pRef = Math.max(Math.abs(lo2), Math.abs(hi2));
+      pill.textContent =
+        U.humanBytesAtStep(lo2, pStep, pRef) +
+        " – " +
+        U.humanBytesAtStep(hi2, pStep, pRef);
       pill.hidden = false;
     }
 
@@ -715,7 +747,12 @@
     var hi = Math.max(0, d3.max(deltas));
     if (lo === hi) hi = (lo || 0) + 1;
     var pad = (hi - lo) * 0.12;
-    var y = d3.scaleLinear().domain([lo - pad, hi + pad]).nice().range([ih, 0]);
+    /* see drawMain: same hint to nice() and ticks() keeps their steps in sync. */
+    var DY_HINT = 5;
+    var y = d3.scaleLinear()
+      .domain([lo - pad, hi + pad])
+      .nice(DY_HINT)
+      .range([ih, 0]);
 
     var svg = d3.select(slot).append("svg")
       .attr("class", "trend-svg trend-delta-svg")
@@ -724,7 +761,13 @@
     var g = svg.append("g").attr("transform", "translate(" + m.left + "," + m.top + ")");
 
     /* gridlines + y labels (signed) */
-    var yticks = y.ticks(3);
+    var yticks = y.ticks(DY_HINT);
+    var dyStep = yticks.length > 1
+      ? yticks[1] - yticks[0]
+      : (Math.abs(yticks[0]) || 1);
+    var dyRef = yticks.length
+      ? Math.max.apply(null, yticks.map(function (d) { return Math.abs(d); })) || 1
+      : 1;
     g.selectAll("line.trend-grid").data(yticks).enter().append("line")
       .attr("class", "trend-grid")
       .attr("x1", 0).attr("x2", iw)
@@ -738,7 +781,7 @@
       .attr("text-anchor", "end")
       .text(function (d) {
         if (d === 0) return "0";
-        return (d > 0 ? "+" : "−") + U.humanBytes(Math.abs(d));
+        return (d > 0 ? "+" : "−") + U.humanBytesAtStep(Math.abs(d), dyStep, dyRef);
       });
 
     var xticks = x.ticks(Math.min(6, data.dates.length));

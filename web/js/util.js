@@ -5,9 +5,11 @@
 (function (global) {
   "use strict";
 
-  /* Human-readable byte sizes: binary (1024), 1 decimal place.
-   * Examples: 2.0T, 245.5G, 10.2M, 4.0K, 512
-   * Bytes below 1K are shown as a bare integer (no suffix, no decimal). */
+  /* Human-readable byte sizes: binary (1024), 2 decimal places.
+   * Examples: 2.00T, 245.50G, 10.20M, 4.00K, 512
+   * Bytes below 1K are shown as a bare integer (no suffix, no decimal).
+   * Two decimals (was one) so storage values at the TB scale carry
+   * meaningful precision side-by-side (91.04T vs 91.21T, not 91.0T vs 91.2T). */
   function humanBytes(n) {
     if (n == null || isNaN(n)) return "—";
     n = Number(n);
@@ -19,7 +21,38 @@
       n /= 1024;
       i++;
     } while (n >= 1024 && i < units.length - 1);
-    return n.toFixed(1) + units[i];
+    return n.toFixed(2) + units[i];
+  }
+
+  /* Adaptive byte formatter for axis tick labels or other collision-prone
+   * places where multiple values are shown next to each other. Picks the
+   * unit from `refValue` (or `value` if not given) so every tick on the
+   * same axis shares a suffix; picks decimals from `step` so adjacent
+   * ticks are always distinguishable. Binary (1024) units, like humanBytes.
+   *
+   * Usage: compute once per axis, then call per tick:
+   *   var step = ticks[1] - ticks[0];
+   *   var ref  = Math.max.apply(null, ticks.map(Math.abs));
+   *   ticks.forEach(function (d) { ...humanBytesAtStep(d, step, ref)... });
+   */
+  function humanBytesAtStep(value, step, refValue) {
+    if (value == null || isNaN(value)) return "—";
+    if (value === 0) return "0";
+    var ref =
+      Math.abs(refValue != null ? refValue : value) ||
+      Math.abs(step) ||
+      1;
+    var units = ["B", "K", "M", "G", "T", "P", "E"];
+    var k = Math.min(
+      units.length - 1,
+      Math.max(0, Math.floor(Math.log(ref) / Math.log(1024)))
+    );
+    var scale = Math.pow(1024, k);
+    var scaledStep = Math.abs(step) / scale;
+    var decimals = scaledStep > 0 ? Math.ceil(-Math.log10(scaledStep)) : 1;
+    decimals = Math.min(4, Math.max(0, decimals));
+    var s = (value / scale).toFixed(decimals);
+    return k === 0 ? s : s + units[k];
   }
 
   /* Exact byte count with thousands separators, e.g. "2,199,023,255,552". */
@@ -164,6 +197,7 @@
 
   global.Util = {
     humanBytes: humanBytes,
+    humanBytesAtStep: humanBytesAtStep,
     exactBytes: exactBytes,
     humanCount: humanCount,
     commaCount: commaCount,
