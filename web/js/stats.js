@@ -188,26 +188,15 @@
 
     /* Process */
     var cpuPct = st.cpu_pct;
-    var cpuRow = row(
-      "CPU (now)",
-      cpuPct != null ? Number(cpuPct).toFixed(1) + "%" : "—"
-    );
+    var fix1 = function (v) { return Number(v).toFixed(1); };
     var procNodes = [
       row("Elapsed", U.humanDuration(st.elapsed_sec)),
-      cpuRow,
+      row("CPU (now)", U.orDash(cpuPct, function (v) { return fix1(v) + "%"; })),
       meter(cpuPct != null ? Number(cpuPct) / 100 : 0, "--green"),
-      row("Status", st.status_desc || "—", null, false),
-      row(
-        "Memory · indexer",
-        st.mem_mb != null ? Number(st.mem_mb).toFixed(1) : "—",
-        " MiB"
-      ),
-      row(
-        "Memory · container",
-        st.cmem_mb != null ? Number(st.cmem_mb).toFixed(1) : "—",
-        " MiB"
-      ),
-      row("Process ID", st.pid != null ? String(st.pid) : "—")
+      row("Status", st.status_desc, null, false),
+      row("Memory · indexer", U.orDash(st.mem_mb, fix1), " MiB"),
+      row("Memory · container", U.orDash(st.cmem_mb, fix1), " MiB"),
+      row("Process ID", U.orDash(st.pid))
     ];
     grid.appendChild(section("Process", procNodes, "tl-area-process"));
 
@@ -217,8 +206,8 @@
         "Location",
         [
           pathRow(st.current_path),
-          row("Depth", st.depth != null ? String(st.depth) : "—"),
-          row("Roots", st.paths || "—", null, true)
+          row("Depth", U.orDash(st.depth)),
+          row("Roots", st.paths, null, true)
         ],
         "tl-area-location"
       )
@@ -229,14 +218,8 @@
       section(
         "Scanned so far",
         [
-          row(
-            "Files",
-            st.files_human || (st.files != null ? U.humanCount(st.files) : "—")
-          ),
-          row(
-            "Directories",
-            st.dirs_human || (st.dirs != null ? U.humanCount(st.dirs) : "—")
-          )
+          row("Files", st.files_human || U.humanCount(st.files)),
+          row("Directories", st.dirs_human || U.humanCount(st.dirs))
         ],
         "tl-area-scanned"
       )
@@ -306,10 +289,7 @@
         row("Finished", U.epochToStr(stats.end)),
         row(
           "Duration",
-          stats.duration_human ||
-            (stats.duration_sec != null
-              ? U.humanDuration(stats.duration_sec)
-              : "—")
+          stats.duration_human || U.humanDuration(stats.duration_sec)
         )
       ])
     );
@@ -326,8 +306,8 @@
 
     /* Per-root */
     grid.appendChild(
-      section("Per-root", [rootsTable(stats.roots)])
-    ).classList.add("tl-section-wide");
+      section("Per-root", [rootsTable(stats.roots)], "tl-section-wide")
+    );
 
     /* Output database */
     grid.appendChild(
