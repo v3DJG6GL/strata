@@ -70,10 +70,15 @@ def load_full_tree(ts):
 
 
 def find_node(node, path):
-    """Locate the node at absolute `path` within a tree, or None."""
-    if (node.get("path") or "") == path:
+    """Locate the node at absolute `path` within a tree, or None.
+
+    (other) buckets inherit their parent's path (see aggregate.py); skip them
+    explicitly so the lookup is invariant under children-iteration order."""
+    if not node.get("other") and (node.get("path") or "") == path:
         return node
     for c in node.get("children", []):
+        if c.get("other"):
+            continue
         cp = c.get("path") or ""
         if cp == path or path.startswith(cp + "/"):
             hit = find_node(c, path)
