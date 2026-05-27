@@ -632,10 +632,14 @@
       centerG.on("click", function () {
         if (focusNode && focusNode.parent) zoomTo(focusNode.parent);
       });
+      /* bind showTip on enter (rebuilds innerHTML) and the lighter positionTip
+       * on every move -- otherwise a hover that sits inside the centre disc
+       * would re-render the tip dozens of times per second. */
       centerG
-        .on("mousemove", function (event) {
+        .on("mouseenter", function (event) {
           showTip(event, f);
         })
+        .on("mousemove", positionTip)
         .on("mouseleave", hideTip);
     }
 
@@ -752,9 +756,11 @@
         rowEl.addEventListener("click", function () {
           drill(k);
         });
-        rowEl.addEventListener("mousemove", function (event) {
+        /* mouseenter rebuilds the tip; mousemove only repositions it. */
+        rowEl.addEventListener("mouseenter", function (event) {
           showTip(event, k);
         });
+        rowEl.addEventListener("mousemove", positionTip);
         rowEl.addEventListener("mouseleave", hideTip);
         list.appendChild(rowEl);
       });
@@ -855,8 +861,13 @@
 
       tip.innerHTML = rows.join("");
       tip.style.display = "block";
+      /* offsetWidth/Height force layout; read once on (re)build and let
+       * positionTip reuse the cached values for every mousemove. */
+      tipW = tip.offsetWidth || 240;
+      tipH = tip.offsetHeight || 120;
       positionTip(event);
     }
+    var tipW = 0, tipH = 0;
 
     function tipRow(k, v) {
       return (
@@ -870,8 +881,8 @@
 
     function positionTip(event) {
       var pad = 16;
-      var w = tip.offsetWidth || 240;
-      var h = tip.offsetHeight || 120;
+      var w = tipW || 240;
+      var h = tipH || 120;
       var x = event.clientX + pad;
       var y = event.clientY + pad;
       if (x + w > window.innerWidth - 8) x = event.clientX - w - pad;
@@ -886,20 +897,20 @@
 
     /* ---- hover highlighting -------------------------------------------- */
     function onArcEnter(event, d) {
-      var chain = {};
-      d.ancestors().forEach(function (a) {
-        chain[nodeKey(a)] = true;
-      });
+      /* identity Set beats nodeKey() string concatenation: hierarchy nodes
+       * are stable references within a build, so one Set lookup per arc
+       * replaces three string composes + map lookups. */
+      var chain = new Set(d.ancestors());
       gArcs
         .selectAll("path.sb-arc")
         .classed("sb-arc-hi", function (n) {
           return n === d;
         })
         .classed("sb-arc-dim", function (n) {
-          return !chain[nodeKey(n)] && n !== d;
+          return !chain.has(n) && n !== d;
         })
         .classed("sb-arc-anc", function (n) {
-          return chain[nodeKey(n)] && n !== d;
+          return chain.has(n) && n !== d;
         });
       showTip(event, d);
     }
