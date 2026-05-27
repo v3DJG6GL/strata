@@ -253,22 +253,27 @@
       labels.push(r.label);
       ts.push(r.ts);
       total.push(r.total);
+      var seenThisRow = {};
       r.roots.forEach(function (root) {
         var p = root.path;
         if (!p) return;
         var v = Number(root.size_actual);
         if (isNaN(v)) return;
         if (!byRoot[p]) {
-          byRoot[p] = { values: [], latest: 0 };
-          /* pad missing prefix with nulls */
-          while (byRoot[p].values.length < i) byRoot[p].values.push(null);
+          /* prefix-pad with nulls in one shot for any root first seen
+           * after row 0 — cheaper than incremental while-push, especially
+           * when a new root appears deep into a long history. */
+          var pad = new Array(i).fill(null);
+          byRoot[p] = { values: pad, latest: 0 };
         }
         byRoot[p].values.push(v);
         byRoot[p].latest = v;
+        seenThisRow[p] = true;
       });
-      /* pad any root not seen this snapshot with null */
+      /* pad with null only the roots that didn't appear in this row;
+       * after this loop every byRoot[p].values has length === i + 1. */
       Object.keys(byRoot).forEach(function (p) {
-        while (byRoot[p].values.length < i + 1) byRoot[p].values.push(null);
+        if (!seenThisRow[p]) byRoot[p].values.push(null);
       });
     });
 
@@ -711,6 +716,9 @@
 
   /* ---- total view: one accent line + clickable dots ---- */
   function drawTotal(g, data, x, y, iw, ih, container) {
+    /* hoist the numeric date array once per draw — bisectCenter would
+     * otherwise rebuild it on every pointermove. */
+    var dateMs = data.dates.map(function (d) { return +d; });
     var pts = data.dates.map(function (d, i) {
       return { date: d, size: data.total[i], i: i };
     });
@@ -740,7 +748,7 @@
      * tooltip (with delta-to-previous) at the nearest x. */
     var tip = container.querySelector("#trend-tip");
     container.__hoverFn = function (mx, event) {
-      var i = d3.bisectCenter(data.dates.map(function (d) { return +d; }), +x.invert(mx));
+      var i = d3.bisectCenter(dateMs, +x.invert(mx));
       var p = pts[i];
       var prev = i > 0 ? data.total[i - 1] : null;
       var dHtml = "";
@@ -837,12 +845,10 @@
       .attr("y1", 0).attr("y2", ih).style("display", "none");
     var marks = g.append("g").attr("class", "trend-marks");
     var tip = container.querySelector("#trend-tip");
+    var dateMs = data.dates.map(function (d) { return +d; });
 
     container.__hoverFn = function (mx, event) {
-      var i = d3.bisectCenter(
-        data.dates.map(function (d) { return +d; }),
-        +x.invert(mx)
-      );
+      var i = d3.bisectCenter(dateMs, +x.invert(mx));
       rule.attr("x1", x(data.dates[i])).attr("x2", x(data.dates[i]))
           .style("display", null);
 
@@ -912,6 +918,7 @@
 
   function attachBrush(g, data, x, iw, ih, container) {
     var brushG = g.append("g").attr("class", "trend-brush");
+    var dateMs = data.dates.map(function (d) { return +d; });
 
     /* selection rect — drawn during drag, hidden otherwise */
     var sel = brushG.append("rect")
@@ -945,10 +952,7 @@
     }
 
     function nearestIndex(mx) {
-      return d3.bisectCenter(
-        data.dates.map(function (d) { return +d; }),
-        +x.invert(mx)
-      );
+      return d3.bisectCenter(dateMs, +x.invert(mx));
     }
 
     hot.on("pointermove", function (event) {
