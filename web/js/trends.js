@@ -1262,7 +1262,12 @@
         return p.v > 0 ? "var(--green)" : p.v < 0 ? "var(--red)" : "var(--dim)";
       });
 
-    function go(i) { global.location.hash = "#/scan/" + encodeURIComponent(data.ts[i]); }
+    function go(i) {
+      /* cancel any pending main-area click defer so its delayed navigation
+       * doesn't clobber this immediate dot-click target. */
+      if (pendingClickTimer) { clearTimeout(pendingClickTimer); pendingClickTimer = null; }
+      global.location.hash = "#/scan/" + encodeURIComponent(data.ts[i]);
+    }
     dots.on("click", function (e, p) { go(deltaPts.indexOf(p)); });
     dots.on("keydown", function (e, p) {
       if (e.key === "Enter" || e.key === " ") {
