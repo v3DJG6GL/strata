@@ -129,7 +129,11 @@ def _collect(node, parent_status, changes, counts):
             # silently drop dirs whose churn lives entirely in their (other) bucket.
             child_sum = sum(c["d_" + m] for c in node["children"] if not c.get("other"))
             node["self_" + m] = node["d_" + m] - child_sum
-        if abs(node["self_actual"]) > EPS or node["self_count"] != 0:
+        if (
+            abs(node["self_actual"]) > EPS
+            or abs(node["self_apparent"]) > EPS
+            or node["self_count"] != 0
+        ):
             changes.append(_change(node))
 
 
