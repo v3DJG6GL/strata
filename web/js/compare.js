@@ -767,8 +767,12 @@
       if (!node) return;
       // grew/shrank is size-classified; in count mode admit any node whose
       // chosen-metric delta moved so count churn feeds the scale reference too.
+      // added/removed are excluded in both modes: arcColor short-circuits them
+      // to fixed green/grey and never consumes scaleRef, so letting their
+      // |d_count|/base == 1 sentinel into the pool only skews the quantile.
       var changed = m.isCount
-        ? Math.abs(num(node[m.dField])) > 0
+        ? (node.status !== "added" && node.status !== "removed" &&
+           Math.abs(num(node[m.dField])) > 0)
         : (node.status === "grew" || node.status === "shrank");
       if (!node.other && changed) {
         var base = Math.abs(num(node[m.nodeBase]));
