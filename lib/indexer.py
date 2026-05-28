@@ -293,11 +293,11 @@ def run_index(scan_paths, priority, copies, progress_path=None):
 
     last = [0.0]
 
-    def progress(c, cur_path=""):
+    def progress(c, cur_path="", force=False):
         if not progress_path:
             return
         now = time.time()
-        if now - last[0] < PROGRESS_EVERY:
+        if not force and now - last[0] < PROGRESS_EVERY:
             return
         last[0] = now
         try:
@@ -319,7 +319,7 @@ def run_index(scan_paths, priority, copies, progress_path=None):
 
     _resolve_hardlinks(hardlinks, priority, copies)
     _finalize(root)
-    progress(ctr)  # final tally
+    progress(ctr, force=True)  # final tally — bypass throttle
 
     detail = {
         "name": "(scan)", "path": "",
