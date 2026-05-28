@@ -791,7 +791,10 @@
         }
       }
       (node.children || []).forEach(walk);
-    })(tree);
+    // Start at the root's children: arcColor short-circuits the depth-0 root to
+    // a fixed colour and the renderer draws depth>0 only, so the root never
+    // consumes scaleRef -- admitting its ratio would just skew the quantile.
+    })({ children: (tree && tree.children) || [] });
 
     if (!ratios.length) return 1;
     ratios.sort(function (a, b) {
