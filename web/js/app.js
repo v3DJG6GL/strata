@@ -175,7 +175,7 @@
     metrics.appendChild(
       metricCell(
         "Duration",
-        s.duration_sec != null ? U.humanDuration(s.duration_sec) : "—"
+        U.humanDuration(s.duration_sec)
       )
     );
     metrics.appendChild(metricCell("DB", U.humanBytes(s.db_bytes)));
