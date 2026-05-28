@@ -3,3 +3,5 @@
 *.md
 docker-compose.yaml
 .dockerignore
+__pycache__/
+*.pyc
