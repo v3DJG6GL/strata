@@ -63,9 +63,14 @@ def build_stats(totals_path, start=None, end=None, samples_path=None):
     total = totals.get("total", {})
 
     db_dir = os.path.dirname(os.path.abspath(totals_path))
-    try:
-        db_bytes = os.path.getsize(os.path.join(db_dir, "strata-%s.full.json.gz" % ts))
-    except OSError:
+    # `ts` is recovered from a basename, so don't let a stray separator turn the
+    # sibling-path lookup into a traversal -- only build it for a clean id.
+    if ts and "/" not in ts and "\\" not in ts and ".." not in ts:
+        try:
+            db_bytes = os.path.getsize(os.path.join(db_dir, "strata-%s.full.json.gz" % ts))
+        except OSError:
+            db_bytes = None
+    else:
         db_bytes = None
 
     duration = None
