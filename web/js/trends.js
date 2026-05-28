@@ -1312,6 +1312,14 @@
         "</div>" +
         '<div class="trend-tip-hint">absolute: ' + U.esc(U.humanBytes(series[i])) + ' · click to open</div>';
       tip.style.display = "block";
+      /* Keyboard focus has no clientX/Y — anchor the tip at the dot itself
+       * so Tab-navigating users see the tooltip next to its target rather
+       * than at the last mouse position (or 0,0 on first interaction). */
+      if (e && e.type === "focus") {
+        var rect = e.currentTarget.getBoundingClientRect();
+        positionTip(container, tip, { clientX: rect.left + rect.width / 2,
+                                      clientY: rect.top  + rect.height / 2 });
+      }
     })
     .on("mousemove", function (e) { positionTip(container, tip, e); })
     .on("mouseleave blur", function () { tip.style.display = "none"; });
