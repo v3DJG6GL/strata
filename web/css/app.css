@@ -549,12 +549,12 @@ button {
 /* Live scanning panel — a fixed asymmetric layout instead of equal
  * auto-fill columns: Process holds the 1/4-width left column full
  * height, Location spans the 3/4-width top row (so a long path barely
- * wraps), and the three compact sections fill the row below. */
+ * wraps), and the two compact sections fill the row below. */
 .tl-grid-live {
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: 1fr 1fr 1fr 1fr;
   grid-template-areas:
     "process location location location"
-    "process scanned  diskio   db";
+    "process scanned  scanned  diskio";
 }
 .tl-area-process {
   grid-area: process;
@@ -567,9 +567,6 @@ button {
 }
 .tl-area-io {
   grid-area: diskio;
-}
-.tl-area-db {
-  grid-area: db;
 }
 
 .tl-section-head {
@@ -1237,8 +1234,8 @@ button {
     grid-template-columns: 1fr 1fr;
     grid-template-areas:
       "location location"
-      "process  diskio"
-      "scanned  db";
+      "process  scanned"
+      "process  diskio";
   }
 }
 @media (max-width: 900px) {

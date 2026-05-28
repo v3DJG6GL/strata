@@ -120,7 +120,7 @@
     return r;
   }
 
-  /* Per-root table shared by both modes. */
+  /* Per-root table (frozen mode only). */
   function rootsTable(roots) {
     var tbl = document.createElement("div");
     tbl.className = "tl-roots";
@@ -239,17 +239,9 @@
       )
     );
 
-    /* Output database */
-    grid.appendChild(
-      section(
-        "Output database",
-        [
-          row("Size", U.humanBytes(st.db_bytes), null, true),
-          row("Growth rate", U.rateKiB(st.db_growth_rate))
-        ],
-        "tl-area-db"
-      )
-    );
+    /* No "Output database" section in live mode: api.cgi op_status
+     * never populates db_bytes/db_growth_rate (only build_stats does,
+     * post-scan), so this section would render two permanent "—" rows. */
 
     panel.appendChild(grid);
     container.appendChild(panel);
