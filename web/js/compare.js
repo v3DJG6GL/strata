@@ -1172,7 +1172,8 @@
   }
 
   function statusRank(s) {
-    return { grew: 0, added: 1, unchanged: 2, shrank: 3, removed: 4 }[s] || 2;
+    var rank = { grew: 0, added: 1, unchanged: 2, shrank: 3, removed: 4 }[s];
+    return rank == null ? 2 : rank;
   }
 
   /* Coalesce: first argument if non-null, else the fallback. */
