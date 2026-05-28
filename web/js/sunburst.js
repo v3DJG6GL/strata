@@ -1224,6 +1224,7 @@
       subtreeCache = {};
       pendingFetch = {};
       hideSpinner(); // a fresh root must not inherit a prior fetch's spinner
+      clearHover(); // nor a pinned tooltip / hover classes from the old tree
       buildAndSnap(null, null); // null focus path → reset to root
     }
 
