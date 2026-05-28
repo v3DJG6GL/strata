@@ -88,6 +88,11 @@ def _walk(node, path, hardlinks, ctr, progress):
         scan = os.scandir(path)
     except OSError:
         return
+    # Collect child dirs during the scandir loop and recurse *after* the
+    # handle closes; recursing inside `with scan:` keeps one FD open per
+    # ancestor, which on a deep tree (default ulimit 1024) trips ENFILE
+    # and the OSError branch silently drops subtrees → undercounted totals.
+    pending = []
     with scan:
         while True:
             try:
@@ -105,7 +110,7 @@ def _walk(node, path, hardlinks, ctr, progress):
                 child = Dir(entry.name, node, node.depth + 1)
                 node.children[entry.name] = child
                 ctr[1] += 1  # directories
-                _walk(child, entry.path, hardlinks, ctr, progress)
+                pending.append((child, entry.path))
                 continue
 
             # a file (regular / symlink / fifo / socket / device ...)
@@ -135,6 +140,9 @@ def _walk(node, path, hardlinks, ctr, progress):
 
             if (ctr[0] & 0x3FFF) == 0:
                 progress(ctr, path)
+
+    for child, child_path in pending:
+        _walk(child, child_path, hardlinks, ctr, progress)
 
 
 # --------------------------------------------------------------------------
