@@ -386,7 +386,11 @@
                 count: null,
                 children: []
               },
-              children: []
+              children: [],
+              /* sum() reads _leafValue off this wrapper, not data; without
+               * it the wedge would contribute 0 and collapse to zero width,
+               * silently dropping the parent's own-file bytes from the arc. */
+              _leafValue: remainder
             });
           }
         }
