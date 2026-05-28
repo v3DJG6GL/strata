@@ -418,6 +418,10 @@
   /* ====================================================================== *
    * COMPARE                                                                *
    * ====================================================================== */
+  function clearTrends() {
+    if (global.Trends && global.Trends.destroy) global.Trends.destroy();
+  }
+
   function clearCompare() {
     if (compareHandle && compareHandle.destroy) {
       try { compareHandle.destroy(); } catch (e) { /* defensive */ }
@@ -428,6 +432,7 @@
   function renderCompare(base, cur) {
     clearPoll();
     clearDetail();
+    clearTrends();
     clearCompare();
 
     appEl.innerHTML =
@@ -535,6 +540,7 @@
         return;
       }
       clearDetail();
+      clearTrends();
       clearCompare();
       renderScanDetail(r.ts, r.focusPath);
     } else if (r.route === "compare") {

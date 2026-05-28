@@ -1430,5 +1430,17 @@
     return true;
   }
 
-  global.Trends = { render: render };
+  /* Tear down resources the router can't reach by wiping the DOM: the
+   * deferred click-nav timer (would otherwise fire ~220ms later and yank the
+   * user back to a chart-dot's scan after they've navigated away) and the
+   * ResizeObserver pinning the now-detached SVG + its fitText closure. The
+   * render-skip cache is keyed on the container element, which is fresh on the
+   * next dashboard mount, so resetting lastSig here just avoids a stale hash. */
+  function destroy() {
+    if (pendingClickTimer) { clearTimeout(pendingClickTimer); pendingClickTimer = null; }
+    if (resizeObs) { resizeObs.disconnect(); resizeObs = null; }
+    lastSig = null;
+  }
+
+  global.Trends = { render: render, destroy: destroy };
 })(window);
