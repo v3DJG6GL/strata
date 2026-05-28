@@ -1104,6 +1104,18 @@
       focusNode = p;
       project(p);
 
+      /* Clear any hover highlight before the tween: arcs whose target is
+       * invisible have their pointer-events flipped to "none" below, so
+       * mouseleave never fires on whatever the user just clicked — the
+       * sb-arc-hi/dim/anc classes would otherwise stay stuck on the
+       * destination view until the user hovers another visible arc. */
+      gArcs
+        .selectAll("path.sb-arc")
+        .classed("sb-arc-hi", false)
+        .classed("sb-arc-dim", false)
+        .classed("sb-arc-anc", false);
+      hideTip();
+
       var t = svg.transition().duration(TWEEN_MS);
 
       gArcs
