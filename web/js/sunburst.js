@@ -871,12 +871,7 @@
          * mode-specific accounting). Show one mode-correct row and
          * skip the always-"—"/always-"0" Items / Child dirs rows. */
         var wedgeV = Number(data.size_actual || 0);
-        rows.push(
-          tipRow(
-            countedLabel(),
-            U.humanBytes(wedgeV) + "  ·  " + U.exactBytes(wedgeV) + " B"
-          )
-        );
+        rows.push(tipRow(countedLabel(), bytesDual(wedgeV)));
         rows.push(tipRow("% of parent", U.pctStr(sz, parentSz)));
         rows.push(tipRow("% of scan", U.pctStr(sz, totalSize)));
       } else {
@@ -885,23 +880,14 @@
          * sub-block files. */
         var saV = Number(data.size_actual || 0);
         var skV = Number(data.size_apparent || 0);
-        rows.push(
-          tipRow("On disk", U.humanBytes(saV) + "  ·  " + U.exactBytes(saV) + " B")
-        );
-        rows.push(
-          tipRow("Apparent", U.humanBytes(skV) + "  ·  " + U.exactBytes(skV) + " B")
-        );
+        rows.push(tipRow("On disk", bytesDual(saV)));
+        rows.push(tipRow("Apparent", bytesDual(skV)));
         /* In copies/exclusive mode the arc width and the "% of parent" /
          * "% of scan" rows come from nodeSize(), which is neither
          * size_actual nor size_apparent. Add the actual counted figure
          * so the percentages reconcile against a visible denominator. */
         if (hlMode !== "dedupe") {
-          rows.push(
-            tipRow(
-              countedLabel(),
-              U.humanBytes(sz) + "  ·  " + U.exactBytes(sz) + " B"
-            )
-          );
+          rows.push(tipRow(countedLabel(), bytesDual(sz)));
         }
         rows.push(tipRow("% of parent", U.pctStr(sz, parentSz)));
         rows.push(tipRow("% of scan", U.pctStr(sz, totalSize)));
@@ -955,6 +941,13 @@
       );
     }
 
+    /* "humanBytes  ·  exactBytes B" — the dual short/exact value the tip
+     * uses for every byte row (wedge counted, On disk, Apparent, the
+     * non-dedupe counted row). One place to tune the separator/units. */
+    function bytesDual(v) {
+      return U.humanBytes(v) + "  ·  " + U.exactBytes(v) + " B";
+    }
+
     function positionTip(event) {
       var pad = 16;
       var w = tipW || 240;
@@ -972,6 +965,19 @@
     }
 
     /* ---- hover highlighting -------------------------------------------- */
+    /* Drop the hi/dim/anc classes from every arc and hide the tip. Shared by
+     * onArcLeave, the lazyLoad pre-graft cleanup, and zoomTo — keeping it in
+     * one place is what R15 had to retrofit in lazyLoad after the cache-hit
+     * regression. */
+    function clearHover() {
+      gArcs
+        .selectAll("path.sb-arc")
+        .classed("sb-arc-hi", false)
+        .classed("sb-arc-dim", false)
+        .classed("sb-arc-anc", false);
+      hideTip();
+    }
+
     function onArcEnter(event, d) {
       /* identity Set beats nodeKey() string concatenation: hierarchy nodes
        * are stable references within a build, so one Set lookup per arc
@@ -996,12 +1002,7 @@
     }
 
     function onArcLeave() {
-      gArcs
-        .selectAll("path.sb-arc")
-        .classed("sb-arc-hi", false)
-        .classed("sb-arc-dim", false)
-        .classed("sb-arc-anc", false);
-      hideTip();
+      clearHover();
     }
 
     /* ---- interaction: click / drill ------------------------------------ */
@@ -1040,14 +1041,8 @@
        * loaded path differs from the current focus. On an (other) graft
        * the loaded path *is* the parent's path, so if the user was already
        * focused there the zoom is skipped and stale highlight + pinned
-       * tip from the click-source arc persist on the freshly grafted view.
-       * Same failure mode the network branch's own strip block fixed. */
-      gArcs
-        .selectAll("path.sb-arc")
-        .classed("sb-arc-hi", false)
-        .classed("sb-arc-dim", false)
-        .classed("sb-arc-anc", false);
-      hideTip();
+       * tip from the click-source arc persist on the freshly grafted view. */
+      clearHover();
 
       /* cache hit — graft instantly */
       if (subtreeCache[path]) {
@@ -1160,12 +1155,7 @@
        * mouseleave never fires on whatever the user just clicked — the
        * sb-arc-hi/dim/anc classes would otherwise stay stuck on the
        * destination view until the user hovers another visible arc. */
-      gArcs
-        .selectAll("path.sb-arc")
-        .classed("sb-arc-hi", false)
-        .classed("sb-arc-dim", false)
-        .classed("sb-arc-anc", false);
-      hideTip();
+      clearHover();
 
       var t = svg.transition().duration(TWEEN_MS);
 
