@@ -315,8 +315,12 @@ def main():
             # snapshots are immutable, so both the overview and lazy drill-down
             # responses are deterministic for a given (ts, path) -- let the
             # browser cache them and skip the gzip+aggregate cost on repeat.
-            cache = "max-age=86400" if ts else "no-cache"
-            respond(op_tree(ts, path), cache=cache)
+            # exception: the "path not found" envelope is short-circuit cheap to
+            # recompute and shouldn't pin a stale-client misstep into the browser
+            # cache for a day, so respond no-cache on the error path.
+            body = op_tree(ts, path)
+            cache = "max-age=86400" if ts and "error" not in body else "no-cache"
+            respond(body, cache=cache)
         elif op == "compare":
             # base/cur are immutable snapshots -> the diff is cacheable
             respond(op_compare(base, cur), cache="max-age=86400")
