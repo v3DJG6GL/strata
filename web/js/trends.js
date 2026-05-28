@@ -69,7 +69,8 @@
           : "total",
       hiddenRoots: Array.isArray(s.hiddenRoots) ? s.hiddenRoots.slice() : [],
       colors: s.colors && typeof s.colors === "object" ? s.colors : {},
-      range: sanitizeRange(s.range)
+      range: sanitizeRange(s.range),
+      interactMode: s.interactMode === "zoom" ? "zoom" : "inspect"
     };
   }
 
@@ -82,7 +83,8 @@
           viewMode: state.viewMode,
           hiddenRoots: state.hiddenRoots,
           colors: state.colors,
-          range: state.range
+          range: state.range,
+          interactMode: state.interactMode
         })
       );
     } catch (_) {
@@ -351,6 +353,18 @@
         saveState();
         drawAll(container);
       }));
+
+      /* interaction mode — Inspect (hover/click, default) vs Zoom (drag a
+       * time range). Read live by the brush layer, so a switch only flips a
+       * cursor class — no redraw, no SVG/observer churn. */
+      headSlot.appendChild(seg("trend-iseg", [
+        { v: "inspect", label: "Inspect", hint: "hover for details, click to open a scan" },
+        { v: "zoom",    label: "Zoom",    hint: "drag to zoom into a time range" }
+      ], state.interactMode, function (v) {
+        state.interactMode = v;
+        saveState();
+        applyInteractModeClass(container);
+      }));
     }
 
     /* main chart slot */
@@ -384,6 +398,15 @@
       "</div>" +
       '<div class="trend-delta-slot" id="trend-delta-slot"></div>';
     container.appendChild(deltaSec);
+
+    applyInteractModeClass(container);
+  }
+
+  /* Toggles the cursor affordance for the brush layer. One container class
+   * drives both charts' hot rects, so the ew-resize "zoom" cursor only shows
+   * in zoom mode; inspect mode keeps a normal cursor. */
+  function applyInteractModeClass(container) {
+    container.classList.toggle("trend-mode-zoom", state.interactMode === "zoom");
   }
 
   /* Maps the current state.range to the value of the preset segmented
@@ -665,19 +688,23 @@
       .attr("text-anchor", "middle")
       .text(xFmt);
 
-    /* ---- view-specific drawing ---- */
+    /* ---- view-specific drawing ---- *
+     * Each view returns its hover hooks ({hover, leave}) so the brush layer
+     * can drive the right tooltip without a shared mutable slot on container
+     * (the delta panel attaches its own brush with its own hooks). */
+    var hooks;
     if (state.viewMode === "total") {
-      drawTotal(g, data, x, y, ih, container);
+      hooks = drawTotal(g, data, x, y, ih, container);
     } else if (state.viewMode === "lines") {
-      drawLines(g, data, visible, x, y, ih, container);
+      hooks = drawLines(g, data, visible, x, y, ih, container);
     } else {
-      drawStacked(g, data, visible, x, y, ih, container);
+      hooks = drawStacked(g, data, visible, x, y, ih, container);
     }
 
     /* brush layer — must sit ABOVE the data so it captures all pointer
      * events on the plot area. The end handler distinguishes click vs drag
      * to preserve the existing "click opens that scan" behaviour. */
-    attachBrush(g, data, x, iw, ih, container);
+    attachBrush(g, data, x, iw, ih, container, hooks);
 
     /* counter-scale axis labels so they stay at their px size regardless of
      * the rendered chart width (the viewBox would otherwise magnify them). */
@@ -770,7 +797,7 @@
      * so pointermove only reflows when the nearest index actually changes. */
     var tip = container.querySelector("#trend-tip");
     var lastI = -1;
-    container.__hoverFn = function (mx, event) {
+    var hover = function (mx, event) {
       var i = d3.bisectCenter(dateMs, +x.invert(mx));
       if (i !== lastI) {
         lastI = i;
@@ -787,12 +814,13 @@
         tip.innerHTML =
           '<div class="trend-tip-lab">' + U.esc(data.labels[i]) + "</div>" +
           '<div class="trend-tip-val mono">' + U.esc(U.humanBytes(p.size)) + dHtml + "</div>" +
-          '<div class="trend-tip-hint">click to open · drag to zoom</div>';
+          '<div class="trend-tip-hint">' + interactHint() + '</div>';
         tip.style.display = "block";
       }
       positionTip(container, tip, event);
     };
-    container.__hoverLeaveFn = function () { lastI = -1; tip.style.display = "none"; };
+    var leave = function () { lastI = -1; tip.style.display = "none"; };
+    return { hover: hover, leave: leave };
   }
 
   /* ---- lines view: per-root + faint total overlay + crosshair ---- */
@@ -820,7 +848,7 @@
     });
 
     /* crosshair overlay + per-series circles, populated on pointermove */
-    crosshair(g, data, visible, x, y, ih, container, false);
+    return crosshair(g, data, visible, x, y, ih, container, false);
   }
 
   /* ---- stacked area view ---- */
@@ -860,7 +888,7 @@
       .attr("stroke", function (s) { return assignColor(s.key); })
       .attr("d", edgeGen);
 
-    crosshair(g, data, visible, x, y, ih, container, true);
+    return crosshair(g, data, visible, x, y, ih, container, true);
   }
 
   /* ---- crosshair shared by lines + stacked ----
@@ -877,7 +905,7 @@
      * only repositions the tip — no DOM remove+append churn on marks or
      * innerHTML reflow. */
     var lastI = -1;
-    container.__hoverFn = function (mx, event) {
+    var hover = function (mx, event) {
       var i = d3.bisectCenter(dateMs, +x.invert(mx));
       if (i !== lastI) {
         lastI = i;
@@ -922,12 +950,13 @@
       }
       positionTip(container, tip, event);
     };
-    container.__hoverLeaveFn = function () {
+    var leave = function () {
       lastI = -1;
       rule.style("display", "none");
       marks.selectAll("*").remove();
       tip.style.display = "none";
     };
+    return { hover: hover, leave: leave };
   }
 
   function positionTip(container, tip, e) {
@@ -941,16 +970,27 @@
   }
 
   /* ---------- brush layer ---------------------------------------------- *
-   * One transparent rect on top of the data captures all pointer events
-   * on the plot area and dispatches them to:
-   *   - hover (no mousedown) → __hoverFn (view-specific tooltip render)
-   *   - click (mousedown + up, no significant drag) → open nearest scan
-   *   - drag (mousedown + move > threshold + up) → set brush range
-   *   - dblclick → reset to "All" (only if a brush/custom range is active)
-   * This unifies interaction across total / lines / stacked view modes. */
+   * One transparent rect on top of the data captures all pointer events on
+   * the plot area and dispatches them via the caller-supplied hooks object
+   * ({ hover, leave }). Behaviour depends on state.interactMode (read live):
+   *   inspect (default):
+   *     - hover (no button down) → hooks.hover (view-specific tooltip)
+   *     - click (down + up, no drag) → open nearest scan
+   *   zoom:
+   *     - drag (down + move > threshold + up) → set brush range
+   *   both:
+   *     - dblclick → reset to "All" (only if a brush/custom range is active)
+   * Used by the main chart (per view mode) and the Δ panel, each with its
+   * own hooks so the two stay independent. */
   var DRAG_THRESHOLD = 4; /* px before a click becomes a drag */
 
-  function attachBrush(g, data, x, iw, ih, container) {
+  /* tooltip footer hint — reflects what the current mode does on interaction */
+  function interactHint() {
+    return state.interactMode === "zoom" ? "drag to zoom" : "click to open";
+  }
+
+  function attachBrush(g, data, x, iw, ih, container, hooks) {
+    hooks = hooks || {};
     var brushG = g.append("g").attr("class", "trend-brush");
     var dateMs = data.dateMs;
 
@@ -990,18 +1030,20 @@
 
     hot.on("pointermove", function (event) {
       var p = localPointer(event);
-      if (down) {
+      /* selection drag is a zoom-mode-only gesture; in inspect mode a held
+       * button never starts a brush, so hover keeps rendering. */
+      if (down && state.interactMode === "zoom") {
         if (!dragging && Math.abs(p[0] - down[0]) > DRAG_THRESHOLD) {
           dragging = true;
-          if (container.__hoverLeaveFn) container.__hoverLeaveFn();
+          if (hooks.leave) hooks.leave();
         }
         if (dragging) {
           var lo = Math.max(0, Math.min(down[0], p[0]));
           var hi = Math.min(iw, Math.max(down[0], p[0]));
           sel.attr("x", lo).attr("width", hi - lo).style("display", null);
         }
-      } else if (container.__hoverFn) {
-        container.__hoverFn(p[0], event);
+      } else if (!down && hooks.hover) {
+        hooks.hover(p[0], event);
       }
     });
 
@@ -1012,7 +1054,11 @@
       if (pendingClickTimer) { clearTimeout(pendingClickTimer); pendingClickTimer = null; }
       down = localPointer(event);
       dragging = false;
-      try { hotNode.setPointerCapture(event.pointerId); } catch (_) {}
+      /* only capture in zoom mode — capturing in inspect mode could swallow
+       * the focus/activation of the delta dots underneath the hot rect. */
+      if (state.interactMode === "zoom") {
+        try { hotNode.setPointerCapture(event.pointerId); } catch (_) {}
+      }
     });
 
     hot.on("pointerup", function (event) {
@@ -1022,7 +1068,7 @@
       var lo = Math.max(0, Math.min(down[0], p[0]));
       var hi = Math.min(iw, Math.max(down[0], p[0]));
       var spanned = hi - lo;
-      if (dragging && spanned >= DRAG_THRESHOLD) {
+      if (state.interactMode === "zoom" && dragging && spanned >= DRAG_THRESHOLD) {
         sel.style("display", "none");
         var t0 = x.invert(lo), t1 = x.invert(hi);
         commitRange(container, {
@@ -1050,7 +1096,7 @@
 
     hot.on("pointerleave", function () {
       if (down) return; /* keep selection visible while dragging out */
-      if (container.__hoverLeaveFn) container.__hoverLeaveFn();
+      if (hooks.leave) hooks.leave();
     });
     hot.on("pointercancel", function () {
       sel.style("display", "none");
@@ -1265,12 +1311,14 @@
         .y(function (p) { return y(p.v); })
         .curve(d3.curveMonotoneX));
 
-    /* dots — clickable */
+    /* dots — focusable links for keyboard users. Pointer interaction (hover
+     * tooltip, click-to-open, drag-to-zoom) flows through the brush layer
+     * attached below, so the two panels behave identically; the dots keep
+     * only the keyboard affordances a <rect> overlay can't provide. */
     var tip = container.querySelector("#trend-tip");
     var dots = g.selectAll("g.trend-dot").data(deltaPts).enter().append("g")
       .attr("class", "trend-dot")
       .attr("transform", function (p) { return "translate(" + x(p.date) + "," + y(p.v) + ")"; })
-      .style("cursor", "pointer")
       .attr("tabindex", 0)
       .attr("role", "link")
       .attr("aria-label", function (p, i) {
@@ -1285,22 +1333,9 @@
         return p.v > 0 ? "var(--green)" : p.v < 0 ? "var(--red)" : "var(--dim)";
       });
 
-    function go(i) {
-      /* cancel any pending main-area click defer so its delayed navigation
-       * doesn't clobber this immediate dot-click target. */
-      if (pendingClickTimer) { clearTimeout(pendingClickTimer); pendingClickTimer = null; }
-      global.location.hash = "#/scan/" + encodeURIComponent(data.ts[i]);
-    }
-    dots.on("click", function (e, p) { go(deltaPts.indexOf(p)); });
-    dots.on("keydown", function (e, p) {
-      if (e.key === "Enter" || e.key === " ") {
-        e.preventDefault();
-        go(deltaPts.indexOf(p));
-      }
-    });
-    dots.on("mouseenter focus", function (e, p) {
-      var i = deltaPts.indexOf(p);
-      var d = p.v;
+    /* renders the Δ tooltip for index i (positioning handled by the caller) */
+    function renderDeltaTip(i) {
+      var d = deltas[i];
       var sign = d > 0 ? '<span class="trend-tip-d up">▲ +' :
                  d < 0 ? '<span class="trend-tip-d down">▼ −' :
                          '<span class="trend-tip-d">±';
@@ -1310,19 +1345,42 @@
           sign + U.esc(U.humanBytes(Math.abs(d))) + "</span>" +
           ' <span class="trend-tip-since">since baseline</span>' +
         "</div>" +
-        '<div class="trend-tip-hint">absolute: ' + U.esc(U.humanBytes(series[i])) + ' · click to open</div>';
+        '<div class="trend-tip-hint">absolute: ' + U.esc(U.humanBytes(series[i])) + ' · ' + interactHint() + '</div>';
       tip.style.display = "block";
-      /* Keyboard focus has no clientX/Y — anchor the tip at the dot itself
-       * so Tab-navigating users see the tooltip next to its target rather
-       * than at the last mouse position (or 0,0 on first interaction). */
-      if (e && e.type === "focus") {
-        var rect = e.currentTarget.getBoundingClientRect();
-        positionTip(container, tip, { clientX: rect.left + rect.width / 2,
-                                      clientY: rect.top  + rect.height / 2 });
+    }
+
+    function go(i) {
+      /* cancel any pending main-area click defer so its delayed navigation
+       * doesn't clobber this immediate keyboard target. */
+      if (pendingClickTimer) { clearTimeout(pendingClickTimer); pendingClickTimer = null; }
+      global.location.hash = "#/scan/" + encodeURIComponent(data.ts[i]);
+    }
+    dots.on("keydown", function (e, p) {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        go(deltaPts.indexOf(p));
       }
-    })
-    .on("mousemove", function (e) { positionTip(container, tip, e); })
-    .on("mouseleave blur", function () { tip.style.display = "none"; });
+    });
+    /* keyboard focus shows the tooltip anchored at the dot (no pointer pos). */
+    dots.on("focus", function (e, p) {
+      renderDeltaTip(deltaPts.indexOf(p));
+      var rect = e.currentTarget.getBoundingClientRect();
+      positionTip(container, tip, { clientX: rect.left + rect.width / 2,
+                                    clientY: rect.top  + rect.height / 2 });
+    });
+    dots.on("blur", function () { tip.style.display = "none"; });
+
+    /* brush layer — same unified pointer interaction as the main chart:
+     * hover tooltip + click-to-open in inspect mode, drag-to-zoom in zoom
+     * mode. Its own hooks keep it independent from the main chart's. */
+    var lastI = -1;
+    var deltaHover = function (mx, event) {
+      var i = d3.bisectCenter(data.dateMs, +x.invert(mx));
+      if (i !== lastI) { lastI = i; renderDeltaTip(i); }
+      positionTip(container, tip, event);
+    };
+    var deltaLeave = function () { lastI = -1; tip.style.display = "none"; };
+    attachBrush(g, data, x, iw, ih, container, { hover: deltaHover, leave: deltaLeave });
   }
 
   /* ---------- orchestration ------------------------------------------- */

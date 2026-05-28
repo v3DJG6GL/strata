@@ -2374,8 +2374,12 @@ button {
   color: var(--accent);
 }
 
-/* drag-to-zoom selection rect + crosshair cursor */
+/* brush layer cursor: normal in inspect mode, ew-resize only in zoom mode.
+   One container class (.trend-mode-zoom) drives both charts' hot rects. */
 .trend-brush-hot {
+  cursor: default;
+}
+.trend-mode-zoom .trend-brush-hot {
   cursor: ew-resize;
 }
 .trend-brush-sel {
