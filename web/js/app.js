@@ -472,6 +472,18 @@
    * the resulting hashchange does not trigger a full re-route. */
   var suppressHash = null;
 
+  /* decodeURIComponent throws URIError on truncated/garbled %-escapes;
+   * a single bad hash would otherwise propagate out of route() and
+   * freeze the SPA on whatever was previously rendered (or the boot
+   * splash, if the bad hash was the entry URL). */
+  function decodePart(s) {
+    try {
+      return decodeURIComponent(s);
+    } catch (_) {
+      return s;
+    }
+  }
+
   function parseHash() {
     var h = location.hash.replace(/^#/, "");
     if (!h || h === "/") return { route: "dashboard" };
@@ -483,15 +495,15 @@
     if (parts[0] === "scan" && parts[1]) {
       return {
         route: "scan",
-        ts: decodeURIComponent(parts[1]),
-        focusPath: parts[2] ? decodeURIComponent(parts[2]) : ""
+        ts: decodePart(parts[1]),
+        focusPath: parts[2] ? decodePart(parts[2]) : ""
       };
     }
     if (parts[0] === "compare") {
       return {
         route: "compare",
-        base: parts[1] ? decodeURIComponent(parts[1]) : "",
-        cur: parts[2] ? decodeURIComponent(parts[2]) : ""
+        base: parts[1] ? decodePart(parts[1]) : "",
+        cur: parts[2] ? decodePart(parts[2]) : ""
       };
     }
     return { route: "dashboard" };
