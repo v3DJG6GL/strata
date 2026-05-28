@@ -789,9 +789,16 @@
           U.esc(k.data.count != null ? U.humanCount(k.data.count) : "—") +
           "</span>";
 
-        rowEl.addEventListener("click", function () {
-          drill(k);
-        });
+        /* Synthetic ·files· wedge isn't navigable — drill() early-returns
+         * on _files. Skip the click handler (and the button affordance)
+         * so the row doesn't look like a dead button. */
+        if (!isFiles) {
+          rowEl.addEventListener("click", function () {
+            drill(k);
+          });
+        } else {
+          rowEl.disabled = true;
+        }
         /* mouseenter rebuilds the tip; mousemove only repositions it. */
         rowEl.addEventListener("mouseenter", function (event) {
           showTip(event, k);
