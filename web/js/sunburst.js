@@ -826,9 +826,18 @@
             "</div>"
         );
       } else if (data._files) {
-        rows.push(
-          '<div class="sb-tip-note">Files held directly in this directory</div>'
-        );
+        /* In dedupe mode the wedge really is just the parent's own files.
+         * In exclusive mode it also absorbs bytes shared between sibling
+         * subtrees (exclusive at the parent but not at any child); in
+         * copies mode it absorbs copy bytes that don't roll up to a
+         * child — so the wording has to match the active hl-mode. */
+        var note =
+          hlMode === "exclusive"
+            ? "Bytes exclusive to this directory (held here or shared only across its sibling subtrees)"
+            : hlMode === "copies"
+              ? "Files held directly here, plus hard-link copies unique to this directory"
+              : "Files held directly in this directory";
+        rows.push('<div class="sb-tip-note">' + U.esc(note) + "</div>");
       }
 
       if (opts.tooltipRows) {
@@ -836,6 +845,23 @@
         opts.tooltipRows(data).forEach(function (r) {
           rows.push(tipRow(r.k, r.v));
         });
+      } else if (data._files) {
+        /* The synthetic wedge stores size_actual === size_apparent ===
+         * remainder computed in the *current* sizeKey/hlMode, so the
+         * dual "On disk / Apparent" rows are always identical AND at
+         * least one label is wrong (e.g. "On disk" in apparent mode).
+         * Show one mode-correct row and skip the always-"—"/always-"0"
+         * Items / Child dirs rows. */
+        var wedgeV = Number(data.size_actual || 0);
+        var wedgeLabel = sizeKey === "size_apparent" ? "Apparent" : "On disk";
+        rows.push(
+          tipRow(
+            wedgeLabel,
+            U.humanBytes(wedgeV) + "  ·  " + U.exactBytes(wedgeV) + " B"
+          )
+        );
+        rows.push(tipRow("% of parent", U.pctStr(sz, parentSz)));
+        rows.push(tipRow("% of scan", U.pctStr(sz, totalSize)));
       } else {
         /* show both sizes so the Actual/Apparent distinction is always
          * visible — they are equal unless a directory holds sparse or
