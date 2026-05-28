@@ -527,6 +527,11 @@
     /* any prior empty-state overlay */
     var prevEmpty = slot.querySelector(".trend-empty");
     if (prevEmpty) prevEmpty.remove();
+    /* Detach the previous ResizeObserver up-front: the sparse-filter branch
+     * below returns early without re-establishing it, which would otherwise
+     * leave the observer pinning the now-removed SVG node (and its closure
+     * captures) in memory until the next non-sparse draw. */
+    if (resizeObs) { resizeObs.disconnect(); resizeObs = null; }
 
     var iw = W - m.left - m.right,
         ih = H_MAIN - m.top - m.bottom;
@@ -682,7 +687,6 @@
         if (deltaSvg) fitSvg(deltaSvg, W);
       });
     }
-    if (resizeObs) resizeObs.disconnect();
     resizeObs = new ResizeObserver(fitText);
     resizeObs.observe(svg.node());
   }
