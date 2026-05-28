@@ -3,7 +3,7 @@ FROM debian:trixie-slim
 
 RUN set -eux; \
     apt-get update; \
-    apt-get install -y --no-install-recommends lighttpd python3 procps; \
+    apt-get install -y --no-install-recommends lighttpd python3; \
     rm -rf /var/lib/apt/lists/*
 
 # Backend: the inode-aware indexer, helpers and shell scripts.
