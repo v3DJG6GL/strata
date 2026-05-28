@@ -1328,7 +1328,10 @@
   }
 
   function updateSnapCount(container, raw, filtered) {
-    var el = container.querySelector("#trend-snap-count");
+    /* #trend-snap-count lives in #trend-controls (the section-head slot),
+     * which is a SIBLING of container (#trend-slot) — querySelector inside
+     * container would always miss it. */
+    var el = document.getElementById("trend-snap-count");
     if (!el) return;
     el.classList.remove("is-active", "is-warn");
     /* clear any previously-installed CTA listener; safe even if absent */
