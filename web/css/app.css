@@ -1845,6 +1845,12 @@ button {
 .cmp-fchip-removed .cmp-fchip-dot {
   background: var(--cmp-removed);
 }
+.cmp-fchip-unchanged {
+  border-color: var(--border);
+}
+.cmp-fchip-unchanged .cmp-fchip-dot {
+  background: var(--dim);
+}
 .cmp-fchip:hover {
   background: var(--panel-hi);
 }

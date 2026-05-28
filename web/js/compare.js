@@ -134,7 +134,17 @@
       metric: METRICS.actual, // active metric
       sb: null, // Sunburst handle
       sort: { col: "self", dir: "desc" }, // diff-table sort
-      filters: { grew: true, shrank: true, added: true, removed: true },
+      /* "unchanged" rows appear when size barely moved but item count
+       * changed (file replacement, churn) — a headline case for the
+       * Items metric. Omitting the key would silently drop every such
+       * row regardless of the user's chip state. */
+      filters: {
+        grew: true,
+        shrank: true,
+        added: true,
+        removed: true,
+        unchanged: true
+      },
       threshold: 0, // noise-threshold (chosen-metric units)
       thresholdMax: 1 // slider ceiling, set after data loads
     };
@@ -928,7 +938,7 @@
     var toolbar = el("div", "cmp-table-toolbar");
 
     var chips = el("div", "cmp-filter-chips");
-    ["grew", "shrank", "added", "removed"].forEach(function (st) {
+    ["grew", "shrank", "unchanged", "added", "removed"].forEach(function (st) {
       var chip = el("button", "cmp-fchip cmp-fchip-" + st);
       chip.type = "button";
       chip.dataset.status = st;
