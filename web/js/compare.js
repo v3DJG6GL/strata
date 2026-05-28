@@ -765,15 +765,16 @@
     var ratios = [];
     (function walk(node) {
       if (!node) return;
-      // grew/shrank is size-classified; in count mode admit any node whose
-      // chosen-metric delta moved so count churn feeds the scale reference too.
-      // added/removed are excluded in both modes: arcColor short-circuits them
-      // to fixed green/grey and never consumes scaleRef, so letting their
-      // |d_count|/base == 1 sentinel into the pool only skews the quantile.
-      var changed = m.isCount
-        ? (node.status !== "added" && node.status !== "removed" &&
-           Math.abs(num(node[m.dField])) > 0)
-        : (node.status === "grew" || node.status === "shrank");
+      // grew/shrank is size-classified, so the actual metric admits exactly
+      // those; the apparent and count metrics admit any node whose own delta
+      // moved, so apparent/count churn on a flat-actual dir still feeds the
+      // scale reference. added/removed are excluded in every mode: arcColor
+      // short-circuits them to fixed green/grey and never consumes scaleRef, so
+      // letting their |d|/base == 1 sentinel into the pool only skews the quantile.
+      var changed = m.key === "actual"
+        ? (node.status === "grew" || node.status === "shrank")
+        : (node.status !== "added" && node.status !== "removed" &&
+           Math.abs(num(node[m.dField])) > 0);
       if (!node.other && changed) {
         var base = Math.abs(num(node[m.nodeBase]));
         var d = Math.abs(num(node[m.dField]));
@@ -815,9 +816,11 @@
 
     var delta = num(d[m.dField]);
     // "unchanged" is size-classified (diff.py keys status off d_actual only),
-    // so in count mode a churn dir with a flat size but a large d_count is
-    // "unchanged" yet has a real delta — neutralise only for size metrics.
-    if (delta === 0 || (status === "unchanged" && !m.isCount)) return "#2b313c"; // near-neutral
+    // so under the apparent or count metric a dir with a flat actual size but a
+    // large d_apparent/d_count is "unchanged" yet has a real delta — only the
+    // actual metric may treat "unchanged" as neutral; the others key off their
+    // own delta (the delta === 0 check above already handles their no-op case).
+    if (delta === 0 || (status === "unchanged" && m.key === "actual")) return "#2b313c"; // near-neutral
 
     /* magnitude 0..1 — log-compressed ratio of |delta| to node base size. */
     var base = Math.abs(num(d[m.nodeBase]));
