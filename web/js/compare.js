@@ -1126,8 +1126,13 @@
       if (path) focusInChart(state, path);
     };
 
-    /* row count readout */
-    var countEl = state.container.querySelector("#cmp-row-count");
+    /* row count readout. Resolve via the section node (not state.container)
+     * because the very first refreshTable() runs from inside buildTableSection
+     * BEFORE the section is appended to the slot — a container-scoped query
+     * would miss the readout on every fresh build / metric toggle. */
+    var countEl =
+      (nodes.section && nodes.section.querySelector("#cmp-row-count")) ||
+      state.container.querySelector("#cmp-row-count");
     if (countEl) {
       countEl.textContent =
         rows.length +
