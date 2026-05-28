@@ -284,7 +284,13 @@
       if (v > max) max = v;
     });
     state.thresholdMax = max || 1;
-    if (state.threshold > state.thresholdMax) state.threshold = 0;
+    /* The threshold is in the chosen metric's units (bytes vs item counts).
+     * computeThresholdCeiling runs on initial load and on every metric toggle,
+     * so a surviving numeric value would be reinterpreted in the new metric's
+     * units (e.g. a byte threshold filtering item counts). Reset to off on any
+     * (re)compute — a carried-over raw magnitude is never meaningful across a
+     * unit change. */
+    state.threshold = 0;
   }
 
   /* ======================================================================= *
