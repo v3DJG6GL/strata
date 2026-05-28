@@ -276,7 +276,6 @@
     grid.appendChild(
       section("Scan", [
         row("Timestamp", stats.ts || "—"),
-        row("Indexer", stats.indexer || "—"),
         row("Started", U.epochToStr(stats.start)),
         row("Finished", U.epochToStr(stats.end)),
         row(

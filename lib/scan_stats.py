@@ -90,7 +90,6 @@ def build_stats(totals_path, start=None, end=None, samples_path=None):
     return {
         "ts": ts,
         "label": fmt.ts_label(ts),
-        "indexer": "built-in inode-aware indexer",
         "start": start,
         "end": end,
         "duration_sec": duration,
