@@ -123,7 +123,11 @@ def _collect(node, parent_status, changes, counts):
             changes.append(_change(node))
     else:
         for m in ("actual", "apparent", "count"):
-            child_sum = sum(c["d_" + m] for c in node["children"])
+            # The synthetic "(other)" bucket never emits its own change row, so
+            # its delta must roll up into this directory's self delta -- folding
+            # it into child_sum instead would attribute the change to nobody and
+            # silently drop dirs whose churn lives entirely in their (other) bucket.
+            child_sum = sum(c["d_" + m] for c in node["children"] if not c.get("other"))
             node["self_" + m] = node["d_" + m] - child_sum
         if abs(node["self_actual"]) > EPS or node["d_count"] != 0:
             changes.append(_change(node))
