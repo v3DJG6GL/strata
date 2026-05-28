@@ -732,7 +732,7 @@
       summary.appendChild(
         stat(
           "Items",
-          f.data.count != null ? U.commaCount(f.data.count) : "—"
+          U.orDash(f.data.count, U.commaCount)
         )
       );
       detailsPanel.appendChild(summary);
@@ -786,7 +786,7 @@
           U.esc(U.pctStr(ksize, fSize)) +
           "</span>" +
           '<span class="sb-row-count mono">' +
-          U.esc(k.data.count != null ? U.humanCount(k.data.count) : "—") +
+          U.esc(U.orDash(k.data.count, U.humanCount)) +
           "</span>";
 
         /* Synthetic ·files· wedge isn't navigable — drill() early-returns
@@ -892,7 +892,7 @@
         rows.push(tipRow("% of parent", U.pctStr(sz, parentSz)));
         rows.push(tipRow("% of scan", U.pctStr(sz, totalSize)));
         rows.push(
-          tipRow("Items", data.count != null ? U.commaCount(data.count) : "—")
+          tipRow("Items", U.orDash(data.count, U.commaCount))
         );
         var childDirs = (data.children || []).filter(function (c) {
           return !c._files;
@@ -1075,7 +1075,7 @@
         })
         .then(function () {
           if (destroyed || rawRoot !== owningRoot) return;
-          pendingFetch[path] = false;
+          delete pendingFetch[path];
           hideSpinner();
         });
     }
