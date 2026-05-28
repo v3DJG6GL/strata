@@ -503,6 +503,7 @@
       b.dataset.value = o.v;
       b.textContent = o.label;
       b.addEventListener("click", function () {
+        if (b.classList.contains("is-active")) return; // no-op re-click: skip the full redraw
         /* sync sibling button state before delegating — the click handler
          * triggers a chart re-render but not a controls rebuild, so the
          * buttons would otherwise keep their initial highlight. */
