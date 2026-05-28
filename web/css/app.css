@@ -1310,6 +1310,12 @@ button {
 .cmp-flat {
   color: var(--dim);
 }
+.cmp-added {
+  color: var(--cmp-added);
+}
+.cmp-removed {
+  color: var(--cmp-removed);
+}
 
 /* page-load staggered reveal — reuses the dashboard's cardIn keyframe */
 .cmp-reveal {
