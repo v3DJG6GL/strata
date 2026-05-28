@@ -2180,6 +2180,7 @@ button {
   padding: 7px 11px;
   box-shadow: var(--shadow);
   white-space: nowrap;
+  min-width: 200px;
 }
 .trend-tip-lab {
   font-size: 12px;
@@ -2448,9 +2449,6 @@ button {
 }
 
 /* tooltip rows (used by crosshair) */
-.trend-tip {
-  min-width: 200px;
-}
 .trend-tip-row {
   display: grid;
   grid-template-columns: 10px 1fr auto;
