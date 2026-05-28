@@ -42,8 +42,18 @@ run_scan() {
     >>"$LOG" 2>&1 &
   local pid=$!
 
-  printf '{"ts":"%s","start":%s,"pid":%s,"paths":"%s"}\n' \
-    "$ts" "$start" "$pid" "${STRATA_SCAN_PATHS:-}" > "$CURRENT_JSON"
+  # Build via json.dumps, not printf: STRATA_SCAN_PATHS is admin-supplied and a
+  # quote/backslash/control char would otherwise produce malformed JSON, making
+  # op_status fail to parse and report scanning:false for the whole live scan.
+  # Values pass through the environment so they're never interpreted as code.
+  TS="$ts" START="$start" PID="$pid" PATHS="${STRATA_SCAN_PATHS:-}" python3 -c '
+import json, os
+print(json.dumps({
+    "ts": os.environ["TS"],
+    "start": int(os.environ["START"]),
+    "pid": int(os.environ["PID"]),
+    "paths": os.environ["PATHS"],
+}))' > "$CURRENT_JSON"
 
   # Sample /proc until the indexer exits -- this blocks for the whole scan.
   python3 "$LIB/sampler.py" "$pid" "$SAMPLES" 8 || true
