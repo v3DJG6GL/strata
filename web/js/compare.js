@@ -365,6 +365,14 @@
     computeThresholdCeiling(state);
     var slot = state.container.querySelector("#cmp-body");
     if (!slot) return;
+    /* Preserve the user's drill-in across the destroy+rebuild — without
+     * this, toggling Actual ↔ Apparent ↔ Items snaps the chart back to
+     * the synthetic root even though the metric toggle is meant to be
+     * a pure re-render. */
+    var savedFocus =
+      state.sb && typeof state.sb.getFocusPath === "function"
+        ? state.sb.getFocusPath()
+        : "";
     destroySunburstSafe(state);
     var replacements = [
       [".cmp-summary", buildSummary(state)],
@@ -375,6 +383,7 @@
       var prev = slot.querySelector(pair[0]);
       if (prev && prev.parentNode) prev.parentNode.replaceChild(pair[1], prev);
     });
+    if (savedFocus && state.sb) state.sb.focusByPath(savedFocus);
   }
 
   /* ----------------------------------------------------------------------- *

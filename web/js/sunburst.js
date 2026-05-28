@@ -1250,6 +1250,11 @@
     return {
       setData: setData,
       focusByPath: focusByPath,
+      /* Read-only getter so embedders (compare's metric toggle) can
+       * round-trip the user's drill-in across a destroy+rebuild. */
+      getFocusPath: function () {
+        return focusNode && focusNode.data ? focusNode.data.path || "" : "";
+      },
       destroy: function () {
         /* Compare mode rebuilds Sunburst instances on every metric/sort
          * toggle; without this teardown the document.body-attached tip,
