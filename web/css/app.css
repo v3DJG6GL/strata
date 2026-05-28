@@ -181,6 +181,9 @@ button {
   text-transform: uppercase;
   color: var(--dim);
   margin: 0;
+  /* never let the controls squeeze the title onto two lines */
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 .section-meta {
   color: var(--dim);
@@ -190,11 +193,24 @@ button {
   margin-left: auto;
   display: flex;
   align-items: center;
-  gap: 14px;
-  /* wrap on narrow viewports — with 3 segmented controls + custom input +
-   * snap-count the row would otherwise overflow */
+  gap: 10px;
+  /* wrap on narrow viewports — with two control clusters (scope + display)
+   * the row breaks between them into two balanced rows rather than overflowing
+   * or orphaning a single trailing control. */
   flex-wrap: wrap;
-  row-gap: 6px;
+  row-gap: 8px;
+  justify-content: flex-end;
+}
+
+/* a cluster of related controls; wraps as a unit so the header breaks at the
+ * semantic boundary between clusters (and only degrades to internal wrapping
+ * on very narrow viewports). */
+.trend-ctl-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  row-gap: 8px;
 }
 .btn-compare {
   font-size: 12px;

@@ -309,19 +309,28 @@
     container.innerHTML = "";
     container.style.position = "relative";
 
-    /* segmented controls live in the section-head; the rest below. */
+    /* segmented controls live in the section-head; the rest below.
+     * The six controls are split into two semantic clusters — "scope" (which
+     * snapshots) and "display" (how to draw them) — each a flex group. The
+     * header wraps between the two groups, so on a tight viewport it breaks
+     * into two balanced rows instead of orphaning a single trailing control. */
     var headSlot = document.querySelector("#trend-controls");
     if (headSlot) {
       headSlot.innerHTML = "";
+
+      var scope = document.createElement("div");
+      scope.className = "trend-ctl-group";
+      var display = document.createElement("div");
+      display.className = "trend-ctl-group";
 
       /* snapshot count — muted feedback, hidden when nothing is filtered */
       var snapCount = document.createElement("span");
       snapCount.id = "trend-snap-count";
       snapCount.className = "trend-snap-count mono";
-      headSlot.appendChild(snapCount);
+      scope.appendChild(snapCount);
 
       /* range presets */
-      headSlot.appendChild(seg("trend-rseg", [
+      scope.appendChild(seg("trend-rseg", [
         { v: "7d",  label: "7d",  hint: "last 7 days" },
         { v: "14d", label: "14d", hint: "last 14 days" },
         { v: "30d", label: "30d", hint: "last 30 days" },
@@ -333,10 +342,10 @@
       }));
 
       /* custom "Last [N] [unit]" input — independent from the preset seg */
-      headSlot.appendChild(buildCustomInput(container));
+      scope.appendChild(buildCustomInput(container));
 
       /* y-axis mode + view mode (existing controls) */
-      headSlot.appendChild(seg("trend-yseg", [
+      display.appendChild(seg("trend-yseg", [
         { v: "auto", label: "Auto-fit", hint: "y-axis zooms to data range" },
         { v: "zero", label: "Zero",     hint: "y-axis anchored at 0" }
       ], state.yMode, function (v) {
@@ -344,7 +353,7 @@
         saveState();
         drawAll(container);
       }));
-      headSlot.appendChild(seg("trend-vseg", [
+      display.appendChild(seg("trend-vseg", [
         { v: "total",   label: "Total",   hint: "single aggregate line" },
         { v: "lines",   label: "Lines",   hint: "one line per root directory" },
         { v: "stacked", label: "Stacked", hint: "stacked area by root" }
@@ -357,7 +366,7 @@
       /* interaction mode — Inspect (hover/click, default) vs Zoom (drag a
        * time range). Read live by the brush layer, so a switch only flips a
        * cursor class — no redraw, no SVG/observer churn. */
-      headSlot.appendChild(seg("trend-iseg", [
+      display.appendChild(seg("trend-iseg", [
         { v: "inspect", label: "Inspect", hint: "hover for details, click to open a scan" },
         { v: "zoom",    label: "Zoom",    hint: "drag to zoom into a time range" }
       ], state.interactMode, function (v) {
@@ -365,6 +374,9 @@
         saveState();
         applyInteractModeClass(container);
       }));
+
+      headSlot.appendChild(scope);
+      headSlot.appendChild(display);
     }
 
     /* main chart slot */
