@@ -23,7 +23,6 @@
   --panel-hi: #21283a;
   --border-soft: #262c38;
   --text-bright: #e6edf3;
-  --accent-dim: #1f6feb;
   --accent-soft: rgba(88, 166, 255, 0.12);
   --shadow: 0 8px 28px -10px rgba(0, 0, 0, 0.7);
   --shadow-lg: 0 24px 60px -20px rgba(0, 0, 0, 0.85);
@@ -1304,12 +1303,6 @@ button {
 }
 .cmp-down {
   color: var(--cmp-down);
-}
-.cmp-added {
-  color: var(--cmp-added);
-}
-.cmp-removed {
-  color: var(--cmp-removed);
 }
 .cmp-flat {
   color: var(--dim);
