@@ -1107,7 +1107,14 @@
     });
 
     hot.on("pointerleave", function () {
-      if (down) return; /* keep selection visible while dragging out */
+      /* zoom mode captures the pointer, so a real drag-out still finishes via
+       * pointerup — keep the selection visible meanwhile. inspect mode takes no
+       * capture and has no drag, so a button-down that leaves the rect is an
+       * aborted click: clear `down` here, or a stuck value wedges hover off
+       * (the off-rect pointerup never fires on this node to reset it). */
+      if (down && state.interactMode === "zoom") return;
+      down = null;
+      dragging = false;
       if (hooks.leave) hooks.leave();
     });
     hot.on("pointercancel", function () {
