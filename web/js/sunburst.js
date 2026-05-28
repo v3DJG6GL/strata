@@ -345,6 +345,16 @@
       return f.base;
     }
 
+    /* Human label that matches what nodeSize() actually counted, for tip
+     * rows whose value is a nodeSize result (the synthetic wedge, and the
+     * "Counted" row added to the non-wedge tip in non-dedupe modes). */
+    function countedLabel() {
+      var ap = sizeKey === "size_apparent";
+      if (hlMode === "exclusive") return ap ? "Exclusive (apparent)" : "Exclusive";
+      if (hlMode === "copies") return ap ? "Apparent + copies" : "On disk + copies";
+      return ap ? "Apparent" : "On disk";
+    }
+
     /* Does this data node have real, expandable children present? */
     function hasChildren(data) {
       return data && data.children && data.children.length > 0;
@@ -849,14 +859,14 @@
         /* The synthetic wedge stores size_actual === size_apparent ===
          * remainder computed in the *current* sizeKey/hlMode, so the
          * dual "On disk / Apparent" rows are always identical AND at
-         * least one label is wrong (e.g. "On disk" in apparent mode).
-         * Show one mode-correct row and skip the always-"—"/always-"0"
-         * Items / Child dirs rows. */
+         * least one label is wrong (e.g. "On disk" in apparent mode,
+         * or "On disk" in copies/exclusive where the value carries
+         * mode-specific accounting). Show one mode-correct row and
+         * skip the always-"—"/always-"0" Items / Child dirs rows. */
         var wedgeV = Number(data.size_actual || 0);
-        var wedgeLabel = sizeKey === "size_apparent" ? "Apparent" : "On disk";
         rows.push(
           tipRow(
-            wedgeLabel,
+            countedLabel(),
             U.humanBytes(wedgeV) + "  ·  " + U.exactBytes(wedgeV) + " B"
           )
         );
@@ -874,6 +884,18 @@
         rows.push(
           tipRow("Apparent", U.humanBytes(skV) + "  ·  " + U.exactBytes(skV) + " B")
         );
+        /* In copies/exclusive mode the arc width and the "% of parent" /
+         * "% of scan" rows come from nodeSize(), which is neither
+         * size_actual nor size_apparent. Add the actual counted figure
+         * so the percentages reconcile against a visible denominator. */
+        if (hlMode !== "dedupe") {
+          rows.push(
+            tipRow(
+              countedLabel(),
+              U.humanBytes(sz) + "  ·  " + U.exactBytes(sz) + " B"
+            )
+          );
+        }
         rows.push(tipRow("% of parent", U.pctStr(sz, parentSz)));
         rows.push(tipRow("% of scan", U.pctStr(sz, totalSize)));
         rows.push(
