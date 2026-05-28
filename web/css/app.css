@@ -1288,10 +1288,10 @@ button {
   --cmp-down: #4cb6e8; /* shrink — cool cyan */
   --cmp-down-soft: rgba(76, 182, 232, 0.13);
   --cmp-down-line: rgba(76, 182, 232, 0.4);
-  --cmp-added: #3fb950; /* added — green (reuses --green) */
+  --cmp-added: var(--green); /* added — green */
   --cmp-added-soft: rgba(63, 185, 80, 0.13);
   --cmp-added-line: rgba(63, 185, 80, 0.4);
-  --cmp-removed: #8b949e; /* removed — muted grey */
+  --cmp-removed: var(--dim); /* removed — muted grey */
   --cmp-removed-soft: rgba(139, 148, 158, 0.1);
   --cmp-removed-line: rgba(139, 148, 158, 0.32);
 }
@@ -1723,9 +1723,8 @@ button {
 .cmp-chart-section {
   margin-bottom: 28px;
 }
-.cmp-sb-slot {
-  /* the Sunburst component styles itself via .sb-root */
-}
+/* .cmp-sb-slot intentionally has no rules — the Sunburst component
+ * styles itself via .sb-root. */
 .cmp-legend {
   display: flex;
   flex-wrap: wrap;
@@ -2258,7 +2257,6 @@ button {
 }
 .trend-snap-cta {
   color: var(--accent);
-  text-decoration: none;
   font-family: var(--mono);
   font-size: 11px;
   letter-spacing: 0.02em;
@@ -2301,7 +2299,6 @@ button {
 }
 .trend-empty-cta {
   color: var(--accent);
-  text-decoration: none;
   font-family: var(--sans);
   font-size: 12px;
   margin-top: 6px;
