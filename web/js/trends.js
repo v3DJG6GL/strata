@@ -1372,10 +1372,18 @@
     /* skip re-render if the snapshot list is unchanged. Sample every ts +
      * total so a re-scan of an existing ts (same key, new bytes) or a
      * mid-list mutation still busts the cache — the previous "first + last
-     * + length" signature missed those and left the chart stale. */
+     * + length" signature missed those and left the chart stale.
+     * Also fold the per-root summary (root count + first root's size) so a
+     * re-scan that produces the same overall total but a different per-root
+     * breakdown — root added/removed, files shuffled between roots, one
+     * root grew and another shrank by the same amount — does not hit the
+     * cache and leave the Lines/Stacked/legend views drawn from old data. */
     var snaps = (snapshots || []).filter(function (s) { return s.ts; });
     var sig = snaps.length + "|" + snaps.map(function (s) {
-      return s.ts + "@" + (s.total ? s.total.size_actual : "");
+      var rs = Array.isArray(s.roots) ? s.roots : [];
+      var r0 = rs.length ? (rs[0].size_actual || "") : "";
+      return s.ts + "@" + (s.total ? s.total.size_actual : "") +
+             "#" + rs.length + ":" + r0;
     }).join(",");
     if (sig === lastSig && container.__trendsData) {
       return true; /* still drawn */
