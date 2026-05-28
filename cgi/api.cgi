@@ -33,7 +33,9 @@ CURRENT_JSON = os.path.join(DB_DIR, "current-scan.json")
 SAMPLES = os.path.join(DB_DIR, "current-scan.samples")
 PROGRESS = os.path.join(DB_DIR, "progress.log")
 
-TS_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}$")
+# \Z (not $) so a trailing newline -- ts=...%0A -- can't slip through the
+# anchored validation; $ also matches just before a final newline in Python.
+TS_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}\Z")
 CLK_TCK = os.sysconf("SC_CLK_TCK") if hasattr(os, "sysconf") else 100
 
 

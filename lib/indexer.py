@@ -27,6 +27,7 @@ CLI:  indexer.py --ts <ts> --out <dir> --progress <file>
 import gzip
 import json
 import os
+import re
 import sys
 import time
 
@@ -379,6 +380,13 @@ def main(argv):
             i += 1
     if not ts or not out:
         sys.stderr.write("usage: indexer.py --ts <ts> --out <dir> [--progress <file>]\n")
+        return 2
+    # ts is interpolated into the output artifact filenames below; validate its
+    # shape here so a caller can never steer the writes outside --out via path
+    # separators or '..'. The scan loop always supplies a date stamp, but the
+    # consumer (cgi/api.cgi artifact()) validates too -- don't rely on callers.
+    if not re.match(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{2}-[0-9]{2}\Z", ts):
+        sys.stderr.write("indexer: invalid --ts (expected YYYY-MM-DD_HH-MM)\n")
         return 2
 
     scan_paths = os.environ.get("STRATA_SCAN_PATHS", "").split()
