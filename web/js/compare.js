@@ -1176,13 +1176,13 @@
         /* apparent/count rows carry no base — fall back to self-delta so the
          * ordering is still stable and intuitive. */
         return (
-          numOr(rowWas(a, m), num(a[m.selfField])) -
-          numOr(rowWas(b, m), num(b[m.selfField]))
+          U.coalesce(rowWas(a, m), num(a[m.selfField])) -
+          U.coalesce(rowWas(b, m), num(b[m.selfField]))
         );
       case "now":
         return (
-          numOr(rowNow(a, m), num(a[m.selfField])) -
-          numOr(rowNow(b, m), num(b[m.selfField]))
+          U.coalesce(rowNow(a, m), num(a[m.selfField])) -
+          U.coalesce(rowNow(b, m), num(b[m.selfField]))
         );
       case "self":
         return num(a[m.selfField]) - num(b[m.selfField]);
@@ -1198,11 +1198,6 @@
   function statusRank(s) {
     var rank = { grew: 0, added: 1, unchanged: 2, shrank: 3, removed: 4 }[s];
     return rank == null ? 2 : rank;
-  }
-
-  /* Coalesce: first argument if non-null, else the fallback. */
-  function numOr(v, fallback) {
-    return v == null ? fallback : v;
   }
 
   /* Row-level "Was" value for the active metric.
