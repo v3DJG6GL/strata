@@ -585,7 +585,7 @@
     band.appendChild(countRow);
 
     /* --- biggest grower / biggest space freed --- */
-    var changes = (r.changes || []).slice();
+    var changes = r.changes || [];
     if (changes.length) {
       /* `changes` arrives pre-sorted by self_actual desc. For the chosen
        * metric we re-rank by self-delta so the highlights stay consistent. */
@@ -1243,6 +1243,14 @@
 
     var dc = dirClass(selfVal);
     var itemsVal = num(c.self_count);
+    /* When the active metric IS count, the "Δ" column already shows
+     * self_count — repeating it in "Δ items" would be a duplicate column. */
+    var itemsTxt = m.isCount
+      ? "—"
+      : itemsVal === 0
+      ? "0"
+      : signedStr(itemsVal, U.commaCount);
+    var itemsDir = m.isCount ? "flat" : dirClass(itemsVal);
 
     return (
       '<tr class="cmp-row cmp-row-' +
@@ -1288,9 +1296,9 @@
       "</td>" +
       /* delta items */
       '<td class="cmp-td cmp-td-num mono cmp-' +
-      dirClass(itemsVal) +
+      itemsDir +
       '">' +
-      U.esc(itemsVal === 0 ? "0" : signedStr(itemsVal, U.commaCount)) +
+      U.esc(itemsTxt) +
       "</td>" +
       "</tr>"
     );
