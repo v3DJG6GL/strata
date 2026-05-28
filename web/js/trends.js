@@ -1004,9 +1004,6 @@
       var lo = Math.max(0, Math.min(down[0], p[0]));
       var hi = Math.min(iw, Math.max(down[0], p[0]));
       var spanned = hi - lo;
-      /* Treat dragging+too-narrow the same as a click — a shaky tap that
-       * crossed the drag threshold but returned near the start otherwise
-       * gets silently swallowed (selection hidden, no nav). */
       if (dragging && spanned >= DRAG_THRESHOLD) {
         sel.style("display", "none");
         var t0 = x.invert(lo), t1 = x.invert(hi);
@@ -1017,8 +1014,12 @@
         saveState();
         syncRangeControls(container);
         drawAll(container);
+      } else if (dragging) {
+        /* shaky tap — crossed the drag threshold but returned near the
+         * start. The user clearly tried to brush; treat the aborted
+         * gesture as no-op rather than turning it into navigation. */
+        sel.style("display", "none");
       } else {
-        if (dragging) sel.style("display", "none");
         /* click without drag → open nearest scan, deferred so a follow-up
          * pointerdown (the start of a dblclick) can cancel us. */
         var ts = data.ts[nearestIndex(p[0])];
