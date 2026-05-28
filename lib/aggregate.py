@@ -44,6 +44,14 @@ def _blank(node):
     return out
 
 
+def _raw_size(node):
+    # Rank/floor key: deduped + copy bytes. Matches the indexer's DETAIL_FLOOR
+    # key (lib/indexer.py:_to_node) so a directory made entirely of hard-link
+    # copies -- deduped size_actual 0 -- isn't quietly folded into "(other)"
+    # at the overview stage after the indexer deliberately kept it browsable.
+    return (node.get("size_actual", 0) or 0) + (node.get("copy_actual", 0) or 0)
+
+
 def _aggregate(node, opts, depth, root_total):
     """Recursively fold one detail-tree node into an overview node."""
     out = _blank(node)
@@ -56,13 +64,12 @@ def _aggregate(node, opts, depth, root_total):
         return out
 
     # Partition raw kids first; folding a child only to drop it into the
-    # "(other)" bucket would discard the entire recursion below it. size_actual
-    # is already final on the raw node (summed bottom-up by the indexer).
+    # "(other)" bucket would discard the entire recursion below it.
     floor = root_total * opts["min_size_ratio"]
-    ranked = sorted(kids, key=lambda c: c.get("size_actual", 0) or 0, reverse=True)
+    ranked = sorted(kids, key=_raw_size, reverse=True)
     keep_raw, rest_raw = [], []
     for i, c in enumerate(ranked):
-        if i < opts["max_children"] and (c.get("size_actual", 0) or 0) >= floor:
+        if i < opts["max_children"] and _raw_size(c) >= floor:
             keep_raw.append(c)
         else:
             rest_raw.append(c)
@@ -94,14 +101,14 @@ def build_overview(detail_root):
     out = _blank(detail_root)
     for scan_root in detail_root.get("children") or []:
         out["children"].append(
-            _aggregate(scan_root, OVERVIEW, 1, scan_root.get("size_actual", 1) or 1)
+            _aggregate(scan_root, OVERVIEW, 1, _raw_size(scan_root) or 1)
         )
     return out
 
 
 def build_lazy(subtree):
     """Aggregate a drilled-into subtree (shallow + wide) for lazy loading."""
-    return _aggregate(subtree, LAZY, 0, subtree.get("size_actual", 1) or 1)
+    return _aggregate(subtree, LAZY, 0, _raw_size(subtree) or 1)
 
 
 def main(argv):
