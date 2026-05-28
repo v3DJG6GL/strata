@@ -1076,7 +1076,9 @@
         .then(function () {
           if (destroyed || rawRoot !== owningRoot) return;
           delete pendingFetch[path];
-          hideSpinner();
+          /* Refcount via pendingFetch: a concurrent fetch on another arc
+           * (different path) keeps the spinner up until the last one lands. */
+          if (Object.keys(pendingFetch).length === 0) hideSpinner();
         });
     }
 
