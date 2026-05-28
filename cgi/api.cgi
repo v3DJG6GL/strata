@@ -312,8 +312,10 @@ def main():
         elif op == "stats":
             respond(op_stats(ts))
         elif op == "tree":
-            # an immutable snapshot tree may be cached by the browser
-            cache = "max-age=86400" if (ts and not path) else "no-cache"
+            # snapshots are immutable, so both the overview and lazy drill-down
+            # responses are deterministic for a given (ts, path) -- let the
+            # browser cache them and skip the gzip+aggregate cost on repeat.
+            cache = "max-age=86400" if ts else "no-cache"
             respond(op_tree(ts, path), cache=cache)
         elif op == "compare":
             # base/cur are immutable snapshots -> the diff is cacheable
