@@ -668,11 +668,13 @@
     var section = el("section", "cmp-chart-section cmp-reveal");
 
     var head = el("div", "section-head");
+    /* The embedded Sunburst defaults sizeKey to "size_actual" and we
+     * pass compareMode:true (which hides its size toggle), so arcs are
+     * always sized by current actual size regardless of the row metric. */
     head.innerHTML =
       '<h2 class="section-title">Delta map</h2>' +
-      '<span class="section-meta">arc size = current ' +
-      U.esc(state.metric.key === "apparent" ? "apparent size" : "actual size") +
-      " · colour = change</span>";
+      '<span class="section-meta">arc size = current actual size · ' +
+      "colour = change</span>";
     section.appendChild(head);
 
     /* legend — explains the diverging colour scale + glyphs */
