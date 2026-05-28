@@ -89,7 +89,7 @@ def build_stats(totals_path, start=None, end=None, samples_path=None):
     if duration and duration > 0:
         rates = {
             "files_per_sec": round((total.get("files") or 0) / duration, 1),
-            "db_growth_kib_s": round(db_bytes / duration / 1024, 1) if db_bytes else None,
+            "db_growth_kib_s": round(db_bytes / duration / 1024, 1) if db_bytes is not None else None,
         }
 
     return {
