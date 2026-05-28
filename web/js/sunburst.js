@@ -1140,7 +1140,6 @@
       };
       subtreeCache = {};
       pendingFetch = {};
-      totalSize = nodeSize(rawRoot) || 1;
       buildAndSnap(null, null); // null focus path → reset to root
     }
 
@@ -1188,6 +1187,10 @@
      * then optionally zooms to `zoomPath` (the node that just got grafted in). */
     function buildAndSnap(focusPath, zoomPath) {
       root = buildHierarchy();
+      /* nodeSize() reads the live sizeKey/hlMode, so the "% of scan" denominator
+       * has to be refreshed on every rebuild — toolbar toggles (relayout) and
+       * subtree grafts (rebuildPreservingFocus) both flow through here. */
+      totalSize = nodeSize(rawRoot) || 1;
       focusNode = (focusPath != null && findHierByPath(focusPath)) || root;
       project(focusNode);
       root.each(function (d) {
