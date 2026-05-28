@@ -1415,6 +1415,7 @@
     var data = flatten(snaps);
     if (!data) {
       lastSig = null;
+      if (resizeObs) { resizeObs.disconnect(); resizeObs = null; }
       container.innerHTML = "";
       container.__trendsData = null;
       return false;
