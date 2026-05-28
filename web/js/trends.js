@@ -326,11 +326,8 @@
         { v: "90d", label: "90d", hint: "last 90 days" },
         { v: "all", label: "All", hint: "every retained snapshot" }
       ], currentRangeKey(), function (v) {
-        if (v === "all") state.range = { kind: "all" };
-        else state.range = { kind: "preset", preset: v };
-        saveState();
-        syncRangeControls(container);
-        drawAll(container);
+        commitRange(container,
+          v === "all" ? { kind: "all" } : { kind: "preset", preset: v });
       }));
 
       /* custom "Last [N] [unit]" input — independent from the preset seg */
@@ -442,10 +439,7 @@
       }
       cur = { n: n, unit: uEl.value };
       nEl.value = String(n);
-      state.range = { kind: "custom", custom: cur };
-      saveState();
-      syncRangeControls(container);
-      drawAll(container);
+      commitRange(container, { kind: "custom", custom: cur });
     }
     nEl.addEventListener("change", commit);
     nEl.addEventListener("keydown", function (e) {
@@ -454,6 +448,17 @@
     uEl.addEventListener("change", commit);
 
     return wrap;
+  }
+
+  /* Set the active time range, persist it, resync the controls, and redraw.
+   * Every range entry-point (preset chip, custom input, brush, CTA links,
+   * dblclick reset) funnels through here so the persist+sync+redraw trio
+   * can't drift apart. */
+  function commitRange(container, range) {
+    state.range = range;
+    saveState();
+    syncRangeControls(container);
+    drawAll(container);
   }
 
   /* Keep the range chips + custom input in sync with state.range — called
@@ -626,11 +631,14 @@
       .attr("y1", function (d) { return y(d); })
       .attr("y2", function (d) { return y(d); });
 
-    /* y labels — anchor the lowest one when zoomed */
+    /* y labels — anchor the lowest one when zoomed. The auto-fit/non-stacked
+     * axis "floats" above zero, so it gets both the anchored bottom label and
+     * the dashed baseline below. */
     var loDom = domain[0];
+    var floatingAxis = state.yMode === "auto" && state.viewMode !== "stacked";
     g.selectAll("text.trend-ylab").data(yticks).enter().append("text")
       .attr("class", function (d) {
-        return "trend-ylab" + (state.yMode === "auto" && state.viewMode !== "stacked" && d === yticks[0] ? " trend-ylab--anchor" : "");
+        return "trend-ylab" + (floatingAxis && d === yticks[0] ? " trend-ylab--anchor" : "");
       })
       .attr("x", -12)
       .attr("y", function (d) { return y(d); })
@@ -639,7 +647,7 @@
       .text(function (d) { return U.humanBytesAtStep(d, yStep, yRef); });
 
     /* dashed baseline marker when the axis is non-zero */
-    if (state.yMode === "auto" && state.viewMode !== "stacked" && loDom > 0) {
+    if (floatingAxis && loDom > 0) {
       g.append("line").attr("class", "trend-baseline")
         .attr("x1", 0).attr("x2", iw)
         .attr("y1", ih).attr("y2", ih);
@@ -658,11 +666,11 @@
 
     /* ---- view-specific drawing ---- */
     if (state.viewMode === "total") {
-      drawTotal(g, data, x, y, iw, ih, container);
+      drawTotal(g, data, x, y, ih, container);
     } else if (state.viewMode === "lines") {
-      drawLines(g, data, visible, x, y, iw, ih, container);
+      drawLines(g, data, visible, x, y, ih, container);
     } else {
-      drawStacked(g, data, visible, x, y, iw, ih, container);
+      drawStacked(g, data, visible, x, y, ih, container);
     }
 
     /* brush layer — must sit ABOVE the data so it captures all pointer
@@ -723,16 +731,13 @@
       '<a href="#" class="trend-empty-cta">Show last 7 d →</a>';
     panel.querySelector(".trend-empty-cta").addEventListener("click", function (e) {
       e.preventDefault();
-      state.range = { kind: "preset", preset: "7d" };
-      saveState();
-      syncRangeControls(container);
-      drawAll(container);
+      commitRange(container, { kind: "preset", preset: "7d" });
     });
     slot.appendChild(panel);
   }
 
   /* ---- total view: one accent line + clickable dots ---- */
-  function drawTotal(g, data, x, y, iw, ih, container) {
+  function drawTotal(g, data, x, y, ih, container) {
     var dateMs = data.dateMs;
     var pts = data.dates.map(function (d, i) {
       return { date: d, size: data.total[i], i: i };
@@ -790,7 +795,7 @@
   }
 
   /* ---- lines view: per-root + faint total overlay + crosshair ---- */
-  function drawLines(g, data, visible, x, y, iw, ih, container) {
+  function drawLines(g, data, visible, x, y, ih, container) {
     var line = d3.line()
       .defined(function (d) { return d.v != null; })
       .x(function (d) { return x(d.date); })
@@ -814,11 +819,11 @@
     });
 
     /* crosshair overlay + per-series circles, populated on pointermove */
-    crosshair(g, data, visible, x, y, iw, ih, container, false);
+    crosshair(g, data, visible, x, y, ih, container, false);
   }
 
   /* ---- stacked area view ---- */
-  function drawStacked(g, data, visible, x, y, iw, ih, container) {
+  function drawStacked(g, data, visible, x, y, ih, container) {
     /* Build wide-format rows for d3.stack. Missing values -> 0 (stack math
      * requires real numbers; the legend chip still shows the root as visible). */
     var keys = visible.map(function (r) { return r.path; });
@@ -854,13 +859,13 @@
       .attr("stroke", function (s) { return assignColor(s.key); })
       .attr("d", edgeGen);
 
-    crosshair(g, data, visible, x, y, iw, ih, container, true);
+    crosshair(g, data, visible, x, y, ih, container, true);
   }
 
   /* ---- crosshair shared by lines + stacked ----
    * Sets up the rule + marks groups and exposes a hover callback consumed
    * by attachBrush. All pointer events arrive via the brush layer. */
-  function crosshair(g, data, visible, x, y, iw, ih, container, isStacked) {
+  function crosshair(g, data, visible, x, y, ih, container, isStacked) {
     var rule = g.append("line").attr("class", "trend-crosshair")
       .attr("y1", 0).attr("y2", ih).style("display", "none");
     var marks = g.append("g").attr("class", "trend-marks");
@@ -1019,13 +1024,10 @@
       if (dragging && spanned >= DRAG_THRESHOLD) {
         sel.style("display", "none");
         var t0 = x.invert(lo), t1 = x.invert(hi);
-        state.range = {
+        commitRange(container, {
           kind: "brush",
           brush: [t0.toISOString(), t1.toISOString()]
-        };
-        saveState();
-        syncRangeControls(container);
-        drawAll(container);
+        });
       } else if (dragging) {
         /* shaky tap — crossed the drag threshold but returned near the
          * start. The user clearly tried to brush; treat the aborted
@@ -1059,10 +1061,7 @@
       event.preventDefault();
       if (pendingClickTimer) { clearTimeout(pendingClickTimer); pendingClickTimer = null; }
       if (state.range && (state.range.kind === "brush" || state.range.kind === "custom")) {
-        state.range = { kind: "all" };
-        saveState();
-        syncRangeControls(container);
-        drawAll(container);
+        commitRange(container, { kind: "all" });
       }
     });
   }
@@ -1381,10 +1380,7 @@
       a.textContent = "Show last 7d →";
       a.addEventListener("click", function (e) {
         e.preventDefault();
-        state.range = { kind: "preset", preset: "7d" };
-        saveState();
-        syncRangeControls(container);
-        drawAll(container);
+        commitRange(container, { kind: "preset", preset: "7d" });
       });
       el.appendChild(a);
     }
