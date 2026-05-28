@@ -27,13 +27,14 @@
 
     var v = document.createElement("span");
     v.className = "tl-val" + (mono === false ? "" : " mono");
-    if (value == null || value === "") value = "—";
+    var missing = value == null || value === "" || value === "—";
+    if (missing) value = "—";
     v.textContent = value;
 
     r.appendChild(k);
     r.appendChild(v);
 
-    if (suffix) {
+    if (suffix && !missing) {
       var s = document.createElement("span");
       s.className = "tl-suffix mono";
       s.textContent = suffix;
