@@ -1035,6 +1035,20 @@
       var path = data.path;
       if (pendingFetch[path]) return;
 
+      /* Strip hover state up front on BOTH paths: rebuildPreservingFocus
+       * only triggers zoomTo (which clears hi/dim/anc + hideTip) when the
+       * loaded path differs from the current focus. On an (other) graft
+       * the loaded path *is* the parent's path, so if the user was already
+       * focused there the zoom is skipped and stale highlight + pinned
+       * tip from the click-source arc persist on the freshly grafted view.
+       * Same failure mode the network branch's own strip block fixed. */
+      gArcs
+        .selectAll("path.sb-arc")
+        .classed("sb-arc-hi", false)
+        .classed("sb-arc-dim", false)
+        .classed("sb-arc-anc", false);
+      hideTip();
+
       /* cache hit — graft instantly */
       if (subtreeCache[path]) {
         graftChildren(data, subtreeCache[path]);
@@ -1044,17 +1058,6 @@
 
       pendingFetch[path] = true;
       showSpinner(d);
-      /* Strip hover state up front: the click-source arc is about to wait
-       * the round-trip on a spinner overlay, and zoomTo (which would
-       * normally clear hi/dim/anc + hideTip) doesn't run until the graft
-       * resolves. Without this the dimmed siblings stay dimmed and the
-       * tip stays pinned under the cursor for the whole fetch. */
-      gArcs
-        .selectAll("path.sb-arc")
-        .classed("sb-arc-hi", false)
-        .classed("sb-arc-dim", false)
-        .classed("sb-arc-anc", false);
-      hideTip();
 
       /* Capture the dataset epoch: setData() between dispatch and resolve
        * replaces rawRoot/subtreeCache/pendingFetch, so the resolved kids
