@@ -432,6 +432,14 @@
        * committed value instead of silently committing "Last 1 ...". */
       if (!Number.isFinite(raw) || raw < 1) { nEl.value = cur.n; return; }
       var n = Math.min(999, raw);
+      /* No-op guard: pressing Enter fires commit() then nEl.blur(), and the
+       * subsequent change event re-enters commit(). Without this guard the
+       * second pass triggers a redundant saveState + drawAll re-render. */
+      if (n === cur.n && uEl.value === cur.unit
+          && state.range && state.range.kind === "custom") {
+        nEl.value = String(n);
+        return;
+      }
       cur = { n: n, unit: uEl.value };
       nEl.value = String(n);
       state.range = { kind: "custom", custom: cur };
