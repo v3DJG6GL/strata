@@ -27,8 +27,9 @@
 
   /* ---- metric definitions ----------------------------------------------- *
    * The metric toggle swaps which family of numbers drives colours, table
-   * and summary. Each metric knows its diff-tree field, its `changes` field,
-   * the absolute base/cur fields, and how to format a value. */
+   * and summary. Each metric knows its diff-tree field, its `changes`
+   * field, the absolute base/cur fields on a diff node, and how to
+   * format a value. */
   var METRICS = {
     actual: {
       key: "actual",
@@ -36,8 +37,6 @@
       sub: "actual",
       dField: "d_actual", // signed subtree delta on a diff node
       selfField: "self_actual", // self delta on a `changes` row
-      baseField: "base_actual",
-      curField: "cur_actual",
       nodeBase: "base_actual", // absolute fields on a diff node
       nodeCur: "size_actual",
       fmt: function (v) {
@@ -51,8 +50,6 @@
       sub: "apparent",
       dField: "d_apparent",
       selfField: "self_apparent",
-      baseField: null, // changes rows carry no apparent base/cur
-      curField: null,
       nodeBase: "base_apparent",
       nodeCur: "size_apparent",
       fmt: function (v) {
@@ -66,8 +63,6 @@
       sub: "items",
       dField: "d_count",
       selfField: "self_count",
-      baseField: null,
-      curField: null,
       nodeBase: "base_count",
       nodeCur: "count",
       fmt: function (v) {
