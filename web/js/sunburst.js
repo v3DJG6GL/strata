@@ -1223,6 +1223,7 @@
       };
       subtreeCache = {};
       pendingFetch = {};
+      hideSpinner(); // a fresh root must not inherit a prior fetch's spinner
       buildAndSnap(null, null); // null focus path → reset to root
     }
 
