@@ -195,7 +195,7 @@
         seg.className = "snap-card-bar-seg";
         var w = rootSum ? ((Number(r.size_actual) || 0) / rootSum) * 100 : 0;
         seg.style.width = w + "%";
-        seg.style.opacity = String(1 - ri * 0.18);
+        seg.style.opacity = String(Math.max(0.1, 1 - ri * 0.18));
         seg.title = r.path + " — " + U.humanBytes(r.size_actual);
         bar.appendChild(seg);
       });
