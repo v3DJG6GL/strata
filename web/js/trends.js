@@ -1431,9 +1431,6 @@
     var el = document.getElementById("trend-snap-count");
     if (!el) return;
     el.classList.remove("is-active", "is-warn");
-    /* clear any previously-installed CTA listener; safe even if absent */
-    var oldCta = el.querySelector(".trend-snap-cta");
-    if (oldCta) oldCta.remove();
 
     var fLen = filtered.dates.length;
     var rLen = raw.dates.length;
