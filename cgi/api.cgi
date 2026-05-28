@@ -304,6 +304,13 @@ def main():
     base = (qs.get("base", [""])[0]) or ""
     cur = (qs.get("cur", [""])[0]) or ""
 
+    # No real filesystem path exceeds PATH_MAX; reject oversized `path` values up
+    # front so a multi-megabyte query string can't amplify the per-request tree
+    # walk into a cheap DoS.
+    if len(path) > 4096:
+        respond({"error": "path not found"}, cache="no-cache")
+        return
+
     try:
         if op == "snapshots":
             respond(op_snapshots())
@@ -326,9 +333,11 @@ def main():
             respond(op_compare(base, cur), cache="max-age=86400")
         else:
             respond({"error": "unknown op: %r" % op})
-    except Exception as exc:  # noqa: BLE001 - surface every failure as JSON
+    except Exception:  # noqa: BLE001 - surface every failure as JSON
+        # Keep the full traceback server-side; never echo str(exc) to the client
+        # -- it leaks absolute data-dir paths and confirms snapshot existence.
         sys.stderr.write(traceback.format_exc())
-        respond({"error": str(exc)})
+        respond({"error": "internal error"})
 
 
 if __name__ == "__main__":
