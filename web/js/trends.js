@@ -665,13 +665,23 @@
     }
     function fitText() {
       fitSvg(svg.node(), W);
-      /* Initialize the delta svg in the same tick — drawDelta has no
-       * ResizeObserver of its own, so without this its labels render at
-       * the viewBox scale until the first resize event fires. */
+      /* drawDelta has no ResizeObserver of its own — piggy-back on
+       * ours so its labels stay at the right pixel size. */
       var deltaSvg = container.querySelector("#trend-delta-slot svg");
       if (deltaSvg) fitSvg(deltaSvg, W);
     }
     fitText();
+    /* On the very first paint drawDelta runs AFTER drawMain (see drawAll),
+     * so the delta svg doesn't exist yet — the lookup above is a no-op and
+     * the delta labels would render at viewBox scale until the next
+     * resize. Run one more pass on a microtask so the delta svg has been
+     * appended by the time we measure it. */
+    if (typeof queueMicrotask === "function") {
+      queueMicrotask(function () {
+        var deltaSvg = container.querySelector("#trend-delta-slot svg");
+        if (deltaSvg) fitSvg(deltaSvg, W);
+      });
+    }
     if (resizeObs) resizeObs.disconnect();
     resizeObs = new ResizeObserver(fitText);
     resizeObs.observe(svg.node());
