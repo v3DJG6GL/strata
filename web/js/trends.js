@@ -1254,7 +1254,7 @@
         var d = p.v;
         return data.labels[i] + " — " +
           (d === 0 ? "no change" : (d > 0 ? "+" : "−") + U.humanBytes(Math.abs(d))) +
-          " since first scan. Open scan.";
+          " since baseline. Open scan.";
       });
     dots.append("circle").attr("class", "trend-hit").attr("r", 14);
     dots.append("circle").attr("class", "trend-pt").attr("r", 3.5)
@@ -1285,7 +1285,7 @@
         '<div class="trend-tip-lab">' + U.esc(data.labels[i]) + "</div>" +
         '<div class="trend-tip-val mono">' +
           sign + U.esc(U.humanBytes(Math.abs(d))) + "</span>" +
-          ' <span class="trend-tip-since">since first</span>' +
+          ' <span class="trend-tip-since">since baseline</span>' +
         "</div>" +
         '<div class="trend-tip-hint">absolute: ' + U.esc(U.humanBytes(series[i])) + ' · click to open</div>';
       tip.style.display = "block";
