@@ -191,6 +191,10 @@ button {
   display: flex;
   align-items: center;
   gap: 14px;
+  /* wrap on narrow viewports — with 3 segmented controls + custom input +
+   * snap-count the row would otherwise overflow */
+  flex-wrap: wrap;
+  row-gap: 6px;
 }
 .btn-compare {
   font-size: 12px;
@@ -2232,13 +2236,6 @@ button {
 /* main chart wrapper */
 .trend-main {
   position: relative;
-}
-
-/* let the section-head-right wrap on narrow viewports — with 3 segmented
- * controls + custom input + snap-count it would otherwise overflow */
-.section-head-right {
-  flex-wrap: wrap;
-  row-gap: 6px;
 }
 
 /* snapshot count — small muted text next to the controls */
