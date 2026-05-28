@@ -84,7 +84,7 @@ def find_node(node, path):
             if c.get("other"):
                 continue
             cp = c.get("path") or ""
-            if cp == path or path.startswith(cp + "/"):
+            if cp == path or path.startswith(cp.rstrip("/") + "/"):
                 nxt = c
                 break
         if nxt is None:
