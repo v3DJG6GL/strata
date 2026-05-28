@@ -1015,10 +1015,28 @@
 
       pendingFetch[path] = true;
       showSpinner(d);
+      /* Strip hover state up front: the click-source arc is about to wait
+       * the round-trip on a spinner overlay, and zoomTo (which would
+       * normally clear hi/dim/anc + hideTip) doesn't run until the graft
+       * resolves. Without this the dimmed siblings stay dimmed and the
+       * tip stays pinned under the cursor for the whole fetch. */
+      gArcs
+        .selectAll("path.sb-arc")
+        .classed("sb-arc-hi", false)
+        .classed("sb-arc-dim", false)
+        .classed("sb-arc-anc", false);
+      hideTip();
 
+      /* Capture the dataset epoch: setData() between dispatch and resolve
+       * replaces rawRoot/subtreeCache/pendingFetch, so the resolved kids
+       * belong to the old scan. Writing them into the new subtreeCache
+       * and calling rebuildPreservingFocus(path) would poison the new
+       * dataset and (worst case) zoom it into a coincidentally-named
+       * node. The captured `data` reference is also orphan-bound. */
+      var owningRoot = rawRoot;
       Promise.resolve(opts.fetchSubtree(path))
         .then(function (node) {
-          if (destroyed) return;
+          if (destroyed || rawRoot !== owningRoot) return;
           var kids = (node && node.children) || [];
           subtreeCache[path] = kids;
           graftChildren(data, kids);
@@ -1029,7 +1047,7 @@
           if (global.console) console.warn("Subtree fetch failed:", err);
         })
         .then(function () {
-          if (destroyed) return;
+          if (destroyed || rawRoot !== owningRoot) return;
           pendingFetch[path] = false;
           hideSpinner();
         });
