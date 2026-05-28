@@ -2185,9 +2185,6 @@ button {
   stroke-width: 2;
   transition: r 0.12s var(--ease);
 }
-.trend-hit {
-  fill: transparent;
-}
 .trend-dot:hover .trend-pt,
 .trend-dot:focus-visible .trend-pt {
   r: 6;

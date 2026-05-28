@@ -1346,7 +1346,6 @@
           (d === 0 ? "no change" : (d > 0 ? "+" : "−") + U.humanBytes(Math.abs(d))) +
           " since baseline. Open scan.";
       });
-    dots.append("circle").attr("class", "trend-hit").attr("r", 14);
     dots.append("circle").attr("class", "trend-pt").attr("r", 3.5)
       .attr("fill", function (p) {
         return p.v > 0 ? "var(--green)" : p.v < 0 ? "var(--red)" : "var(--dim)";
