@@ -1046,6 +1046,7 @@
         var parent = findByChild(rawRoot, data);
         if (parent) {
           parent.children = kids.slice();
+          parent.truncated = false;
         } else {
           /* fallback: attach onto the (other) node itself */
           data.children = kids.slice();
