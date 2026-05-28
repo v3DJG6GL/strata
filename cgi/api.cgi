@@ -193,7 +193,7 @@ def op_status():
     import time
     now = time.time()
     start = cur.get("start")
-    elapsed = int(now - start) if start else None
+    elapsed = max(0, int(now - start)) if start else None
 
     res = {
         "scanning": True,
