@@ -1922,8 +1922,6 @@ button {
   font-size: 12.5px;
 }
 .cmp-th {
-  position: sticky;
-  top: 0;
   background: rgba(0, 0, 0, 0.3);
   color: var(--dim);
   font-size: 10px;
