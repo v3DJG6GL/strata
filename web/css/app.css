@@ -670,7 +670,6 @@ button {
 }
 .tl-roots-head {
   background: rgba(0, 0, 0, 0.25);
-  color: var(--dim);
   font-size: 10px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
