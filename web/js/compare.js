@@ -765,7 +765,12 @@
     var ratios = [];
     (function walk(node) {
       if (!node) return;
-      if (!node.other && (node.status === "grew" || node.status === "shrank")) {
+      // grew/shrank is size-classified; in count mode admit any node whose
+      // chosen-metric delta moved so count churn feeds the scale reference too.
+      var changed = m.isCount
+        ? Math.abs(num(node[m.dField])) > 0
+        : (node.status === "grew" || node.status === "shrank");
+      if (!node.other && changed) {
         var base = Math.abs(num(node[m.nodeBase]));
         var d = Math.abs(num(node[m.dField]));
         if (base > 0) {
@@ -805,7 +810,10 @@
     if (status === "added") return "#2ea043"; // clear green
 
     var delta = num(d[m.dField]);
-    if (delta === 0 || status === "unchanged") return "#2b313c"; // near-neutral
+    // "unchanged" is size-classified (diff.py keys status off d_actual only),
+    // so in count mode a churn dir with a flat size but a large d_count is
+    // "unchanged" yet has a real delta — neutralise only for size metrics.
+    if (delta === 0 || (status === "unchanged" && !m.isCount)) return "#2b313c"; // near-neutral
 
     /* magnitude 0..1 — log-compressed ratio of |delta| to node base size. */
     var base = Math.abs(num(d[m.nodeBase]));
