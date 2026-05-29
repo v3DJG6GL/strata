@@ -27,6 +27,8 @@
   var pollTimer = null;
   var pollInFlight = false;
   var lastScanning = null;
+  /* 1s ticker for the idle next-scan countdown (only one ever runs). */
+  var countdownTimer = null;
 
   /* Handle returned by ComparePage.render — used to tear down the embedded
    * sunburst (body-pinned tooltip + ResizeObserver) when leaving /compare. */
@@ -45,11 +47,19 @@
     );
   }
 
+  function clearCountdown() {
+    if (countdownTimer) {
+      clearInterval(countdownTimer);
+      countdownTimer = null;
+    }
+  }
+
   function clearPoll() {
     if (pollTimer) {
       clearInterval(pollTimer);
       pollTimer = null;
     }
+    clearCountdown();
   }
 
   /* ====================================================================== *
@@ -252,6 +262,7 @@
         var scanning = !!(st && st.scanning);
 
         if (scanning) {
+          clearCountdown(); // a scan started → stop the idle ticker
           var panelWrap = slot.querySelector(".live-wrap");
           if (!panelWrap) {
             panelWrap = document.createElement("section");
@@ -260,8 +271,35 @@
             slot.appendChild(panelWrap);
           }
           global.Stats.renderLive(panelWrap, st);
-        } else if (slot.firstChild) {
-          slot.innerHTML = "";
+        } else if (st && st.next_scan != null) {
+          /* idle, but we know when the next scan is due → countdown card */
+          var idleWrap = slot.querySelector(".live-wrap");
+          if (!idleWrap) {
+            idleWrap = document.createElement("section");
+            idleWrap.className = "live-wrap";
+            slot.innerHTML = "";
+            slot.appendChild(idleWrap);
+          }
+          global.Stats.renderIdle(idleWrap, st);
+          /* Re-anchor to server time each poll so a skewed client clock can't
+           * drift the displayed countdown; restart the single 1s ticker. */
+          var serverNow =
+            st.server_now != null ? st.server_now : Math.floor(Date.now() / 1000);
+          var skew = serverNow - Math.floor(Date.now() / 1000);
+          var tick = function () {
+            if (!idleWrap.isConnected) {
+              clearCountdown();
+              return;
+            }
+            var rem = st.next_scan - (Math.floor(Date.now() / 1000) + skew);
+            global.Stats.updateCountdown(idleWrap, rem, st);
+          };
+          clearCountdown();
+          countdownTimer = setInterval(tick, 1000);
+          tick(); // paint immediately, don't wait a second
+        } else {
+          clearCountdown();
+          if (slot.firstChild) slot.innerHTML = "";
         }
 
         /* a scan just finished → refresh the snapshot list */

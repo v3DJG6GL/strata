@@ -32,6 +32,7 @@ DB_DIR = os.environ.get("STRATA_DB_DIR", "/var/lib/strata")
 CURRENT_JSON = os.path.join(DB_DIR, "current-scan.json")
 SAMPLES = os.path.join(DB_DIR, "current-scan.samples")
 PROGRESS = os.path.join(DB_DIR, "progress.log")
+NEXT_JSON = os.path.join(DB_DIR, "next-scan.json")
 
 # \Z (not $) so a trailing newline -- ts=...%0A -- can't slip through the
 # anchored validation; $ also matches just before a final newline in Python.
@@ -118,8 +119,11 @@ def humansize_count(text):
     return int(float(m.group(1)) * mult)
 
 
-def parse_progress():
-    """Extract (files, dirs, current_path) from the live progress log."""
+def _parse_progress_legacy():
+    """Fallback for a pre-upgrade text progress.log (the old 3-line format).
+
+    Returns a doc shaped like the JSON writer's, but with phase/total absent so
+    op_status renders the live panel without a percent meter (graceful)."""
     try:
         with open(PROGRESS, "rb") as f:
             f.seek(0, os.SEEK_END)
@@ -127,7 +131,7 @@ def parse_progress():
             f.seek(max(0, size - 8192))
             tail = f.read().decode("utf-8", "replace")
     except OSError:
-        return None, None, None
+        return None
     tail = tail.replace("\r", "\n")
     files_h = dirs_h = cur_path = None
     for line in tail.splitlines():
@@ -143,7 +147,28 @@ def parse_progress():
             files_h = fm.group(1).replace(" ", "")
         if dm:
             dirs_h = dm.group(1).replace(" ", "")
-    return files_h, dirs_h, cur_path
+    if files_h is None and dirs_h is None and cur_path is None:
+        return None
+    return {
+        "phase": None,
+        "files": humansize_count(files_h),
+        "dirs": humansize_count(dirs_h),
+        "total": None,
+        "path": cur_path or "",
+        "phase_start_epoch": None,
+    }
+
+
+def parse_progress():
+    """The live progress doc, or None. JSON first; legacy text as a fallback."""
+    try:
+        with open(PROGRESS) as f:
+            doc = json.load(f)
+        if isinstance(doc, dict) and "phase" in doc:
+            return doc
+    except (OSError, ValueError):
+        pass
+    return _parse_progress_legacy()
 
 
 def tail_samples(n=2):
@@ -186,14 +211,27 @@ def op_snapshots():
 
 
 def op_status():
+    import time
+    now = time.time()
+
     try:
         with open(CURRENT_JSON) as f:
             cur = json.load(f)
     except (OSError, ValueError):
-        return {"scanning": False}
+        # Idle: report when the next scan is due so the UI can count down.
+        res = {"scanning": False, "server_now": int(now)}
+        try:
+            with open(NEXT_JSON) as f:
+                nx = json.load(f)
+            res["next_scan"] = nx.get("next")
+            res["mode"] = nx.get("mode")
+            res["schedule"] = nx.get("schedule")
+            res["interval_sec"] = nx.get("interval_sec")
+            res["tz"] = nx.get("tz")
+        except (OSError, ValueError):
+            pass
+        return res
 
-    import time
-    now = time.time()
     start = cur.get("start")
     elapsed = max(0, int(now - start)) if start else None
 
@@ -203,20 +241,37 @@ def op_status():
         "pid": cur.get("pid"),
         "paths": cur.get("paths"),
         "elapsed_sec": elapsed,
+        "server_now": int(now),
+        "phase": None,
         "current_path": None, "depth": None,
         "files": None, "dirs": None, "files_human": None, "dirs_human": None,
+        "total": None, "percent": None, "eta_sec": None,
         "cpu_pct": None, "mem_mb": None, "cmem_mb": None, "status_desc": None,
         "read_bytes": None, "write_bytes": None, "read_rate": None, "write_rate": None,
         "db_bytes": None, "db_growth_rate": None,
     }
 
-    files_h, dirs_h, cur_path = parse_progress()
-    res["files_human"], res["dirs_human"] = files_h, dirs_h
-    res["files"] = humansize_count(files_h)
-    res["dirs"] = humansize_count(dirs_h)
+    doc = parse_progress() or {}
+    res["phase"] = doc.get("phase")
+    res["files"] = doc.get("files")
+    res["dirs"] = doc.get("dirs")
+    res["total"] = doc.get("total")
+    cur_path = doc.get("path")
     if cur_path:
         res["current_path"] = cur_path
         res["depth"] = max(0, cur_path.count("/"))
+
+    # Percent + ETA only make sense once indexing (post-count) with a total.
+    files, total = res["files"], res["total"]
+    if res["phase"] == "indexing" and total and files is not None:
+        # Clamp below 100: a finished scan is signalled by current-scan.json
+        # disappearing, not by percent hitting 100 (the pre-count can overshoot).
+        res["percent"] = min(99.9, max(0.0, files / total * 100.0))
+        ps = doc.get("phase_start_epoch")
+        if ps and files > 0:
+            el = now - ps
+            if el > 0:
+                res["eta_sec"] = int((total - files) / (files / el))
 
     samples = tail_samples(2)
     if samples:

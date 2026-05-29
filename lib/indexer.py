@@ -146,6 +146,51 @@ def _walk(node, path, hardlinks, ctr, progress):
         _walk(child, child_path, hardlinks, ctr, progress)
 
 
+def _precount_walk(path, ctr, progress):
+    """Count files (non-dir entries) under `path`, scandir + d_type only.
+
+    Mirrors _walk's FD-careful pattern (defer recursion until the handle
+    closes) and its error handling (drop an unreadable subtree, treat an entry
+    whose type can't be read as a file), so the total lines up with what the
+    real walk sees -- both passes fail on exactly the same directories. No
+    stat() here, which is what makes the pre-pass much cheaper than the walk."""
+    try:
+        scan = os.scandir(path)
+    except OSError:
+        return
+    pending = []
+    with scan:
+        while True:
+            try:
+                entry = next(scan)
+            except StopIteration:
+                break
+            except OSError:
+                continue
+            try:
+                is_dir = entry.is_dir(follow_symlinks=False)
+            except OSError:
+                is_dir = False
+            if is_dir:
+                pending.append(entry.path)
+            else:
+                ctr[0] += 1
+                if (ctr[0] & 0x3FFF) == 0:
+                    progress(ctr[0])
+    for child_path in pending:
+        _precount_walk(child_path, ctr, progress)
+
+
+def _precount(scan_paths, progress):
+    """Total file count across all scan roots (cheap scandir-only pre-pass)."""
+    ctr = [0]
+    for p in scan_paths:
+        p = p.rstrip("/") or "/"
+        if os.path.isdir(p):
+            _precount_walk(p, ctr, progress)
+    return ctr[0]
+
+
 # --------------------------------------------------------------------------
 # hard-link resolution
 # --------------------------------------------------------------------------
@@ -296,25 +341,60 @@ def run_index(scan_paths, priority, copies, progress_path=None):
     # _walk / _finalize / _to_node all recurse with the filesystem; lift the
     # guard here so embedding callers inherit it, not just the CLI entry.
     sys.setrecursionlimit(max(sys.getrecursionlimit(), 20000))
-    root = Dir("(scan)", None, 0)
-    hardlinks = {}
-    ctr = [0, 0]  # [files, dirs]
 
+    index_start = time.time()
     last = [0.0]
+    phase_start = [index_start]
 
-    def progress(c, cur_path="", force=False):
+    def write_progress(phase, files, dirs, cur_path, total, force=False):
+        # Atomic JSON: api.cgi reads this file concurrently, so write a temp
+        # and rename it into place -- a half-written file would otherwise make
+        # the live panel flicker to "no progress".
         if not progress_path:
             return
         now = time.time()
         if not force and now - last[0] < PROGRESS_EVERY:
             return
         last[0] = now
+        doc = {
+            "phase": phase,                  # 'counting' | 'indexing'
+            "files": files,
+            "dirs": dirs,
+            "total": total,
+            "path": cur_path or "",
+            "index_start_epoch": index_start,
+            "phase_start_epoch": phase_start[0],
+        }
+        tmp = progress_path + ".tmp"
         try:
-            with open(progress_path, "w") as f:
-                f.write("Indexed %d files and %d directories\nAt: %s\n"
-                        % (c[0], c[1], cur_path))
+            with open(tmp, "w") as f:
+                json.dump(doc, f, separators=(",", ":"))
+            os.replace(tmp, progress_path)
         except OSError:
             pass
+
+    # Publish a 'counting' doc immediately so the first status poll reads a
+    # valid file the instant the indexer starts (no empty-file window).
+    write_progress("counting", 0, None, "", None, force=True)
+
+    # Phase 1: a cheap scandir-only pre-pass so live progress has an exact
+    # denominator. It may slightly overshoot the real count (it counts files
+    # whose stat() later fails, which _walk skips); op_status clamps for that.
+    def count_progress(n):
+        write_progress("counting", n, None, "", None)
+
+    total = _precount(scan_paths, count_progress)
+    write_progress("counting", total, None, "", total, force=True)
+
+    # Phase 2: the real inode-aware walk. Reset phase_start so the ETA is
+    # measured from when indexing began, not from the start of counting.
+    phase_start[0] = time.time()
+    root = Dir("(scan)", None, 0)
+    hardlinks = {}
+    ctr = [0, 0]  # [files, dirs]
+
+    def progress(c, cur_path="", force=False):
+        write_progress("indexing", c[0], c[1], cur_path, total, force=force)
 
     for p in scan_paths:
         p = p.rstrip("/") or "/"

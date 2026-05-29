@@ -671,6 +671,118 @@ button {
   transition: width 0.5s var(--ease);
 }
 
+/* ----- live scan progress strip (between the panel head and the grid) ---- */
+.tl-progress {
+  padding: 15px 18px 14px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(0, 0, 0, 0.14);
+}
+.tl-progress-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 9px;
+}
+.tl-progress-pct {
+  font-size: 26px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.01em;
+  color: var(--green);
+}
+.tl-progress-eta {
+  color: var(--dim);
+  font-size: 12.5px;
+}
+.tl-progress-label {
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-bright);
+}
+.tl-progress-found {
+  color: var(--green);
+  font-size: 12.5px;
+}
+.tl-progress-sub {
+  margin-top: 8px;
+  color: var(--dim);
+  font-size: 12px;
+}
+.tl-progress-bar {
+  position: relative;
+  height: 9px;
+  background: var(--bg);
+  border: 1px solid var(--border-soft);
+  border-radius: 5px;
+  overflow: hidden;
+}
+.tl-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #2ea043, var(--green));
+  border-radius: 5px;
+  box-shadow: 0 0 10px -2px var(--green);
+  transition: width 0.6s var(--ease);
+}
+/* indeterminate sweep — used while counting, before the total is known */
+.tl-progress-fill-indef {
+  position: absolute;
+  top: 0;
+  left: 0;
+  height: 100%;
+  width: 40%;
+  border-radius: 5px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(63, 185, 80, 0.85),
+    transparent
+  );
+  animation: tlSweep 1.25s var(--ease) infinite;
+}
+@keyframes tlSweep {
+  0% {
+    transform: translateX(-110%);
+  }
+  100% {
+    transform: translateX(300%);
+  }
+}
+
+/* ----- idle "next scan" card — calmer, accent-blue not scanning-green ---- */
+.telemetry-idle .tl-head {
+  background: linear-gradient(
+    90deg,
+    rgba(121, 192, 255, 0.1),
+    rgba(0, 0, 0, 0.22)
+  );
+}
+.tl-idle-body {
+  padding: 22px 18px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.tl-countdown {
+  font-size: 34px;
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: 0.02em;
+  color: var(--accent);
+  text-shadow: 0 0 18px rgba(121, 192, 255, 0.25);
+}
+.tl-countdown-now {
+  color: var(--green);
+  text-shadow: 0 0 18px rgba(63, 185, 80, 0.3);
+}
+.tl-idle-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-width: 460px;
+}
+
 /* per-root table inside telemetry */
 .tl-roots {
   display: flex;

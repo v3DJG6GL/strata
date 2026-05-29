@@ -75,6 +75,74 @@
     return wrap;
   }
 
+  /* Countdown string with seconds — "5h 23m 10s" / "23m 10s" / "10s".
+   * (Util.humanDuration drops seconds once hours appear; a ticking timer
+   * needs them, so this is its own small formatter.) */
+  function countdownStr(sec) {
+    sec = Math.max(0, Math.floor(Number(sec) || 0));
+    var h = Math.floor(sec / 3600);
+    var m = Math.floor((sec % 3600) / 60);
+    var s = sec % 60;
+    function p(n) { return n < 10 ? "0" + n : String(n); }
+    if (h > 0) return h + "h " + p(m) + "m " + p(s) + "s";
+    if (m > 0) return m + "m " + p(s) + "s";
+    return s + "s";
+  }
+
+  /* The live progress strip shown above the telemetry grid. Two states:
+   *  - counting: total unknown yet -> an indeterminate sweeping bar.
+   *  - indexing: a big "≈NN%" readout, a determinate bar, counts + ETA. */
+  function progressStrip(st) {
+    var wrap = document.createElement("div");
+    wrap.className = "tl-progress";
+
+    if (st.phase === "indexing" && st.total) {
+      wrap.classList.add("tl-progress-indexing");
+      var pct = Math.max(0, Math.min(99.9, Number(st.percent) || 0));
+
+      var top = document.createElement("div");
+      top.className = "tl-progress-top";
+      top.innerHTML =
+        '<span class="tl-progress-pct mono">≈' + Math.round(pct) + "%</span>" +
+        '<span class="tl-progress-eta mono">ETA ' +
+        (st.eta_sec != null ? "~" + U.esc(U.humanDuration(st.eta_sec)) : "—") +
+        "</span>";
+      wrap.appendChild(top);
+
+      var bar = document.createElement("div");
+      bar.className = "tl-progress-bar";
+      var fill = document.createElement("div");
+      fill.className = "tl-progress-fill";
+      fill.style.width = pct + "%";
+      bar.appendChild(fill);
+      wrap.appendChild(bar);
+
+      var sub = document.createElement("div");
+      sub.className = "tl-progress-sub mono";
+      sub.textContent =
+        U.humanCount(st.files) + " / " + U.humanCount(st.total) + " files";
+      wrap.appendChild(sub);
+    } else {
+      // counting (or indexing before the total is known) -> indeterminate
+      wrap.classList.add("tl-progress-counting");
+      var topc = document.createElement("div");
+      topc.className = "tl-progress-top";
+      topc.innerHTML =
+        '<span class="tl-progress-label mono">Counting files…</span>' +
+        '<span class="tl-progress-found mono">' +
+        U.esc(U.humanCount(st.files)) + " found</span>";
+      wrap.appendChild(topc);
+
+      var barc = document.createElement("div");
+      barc.className = "tl-progress-bar tl-progress-bar-indef";
+      var fillc = document.createElement("div");
+      fillc.className = "tl-progress-fill-indef";
+      barc.appendChild(fillc);
+      wrap.appendChild(barc);
+    }
+    return wrap;
+  }
+
   /* The live "Path" row: segments the current path, dims the parent
    * directories and highlights the deepest folder, and inserts a <wbr>
    * break opportunity after every "/" so a long path wraps cleanly at
@@ -183,6 +251,12 @@
       U.esc(st.ts || "") +
       "</span>";
     panel.appendChild(head);
+
+    /* progress strip (above the grid) — only when the backend reports a
+     * phase; a legacy text progress.log has phase=null and is skipped. */
+    if (st.phase === "counting" || st.phase === "indexing") {
+      panel.appendChild(progressStrip(st));
+    }
 
     var grid = document.createElement("div");
     grid.className = "tl-grid tl-grid-live";
@@ -335,8 +409,77 @@
     container.appendChild(panel);
   }
 
+  /* ---- IDLE mode (next-scan countdown) ----------------------------------- */
+
+  /* Render the idle "next scan" card. Idempotent: if the card already shows
+   * the same schedule, leave it (and its ticking countdown) untouched so the
+   * 4s status poll doesn't reset the timer or flicker the DOM. */
+  function renderIdle(container, st) {
+    var sig = [
+      st.next_scan, st.mode, st.schedule, st.interval_sec, st.tz
+    ].join("|");
+    var existing = container.querySelector(".telemetry-idle");
+    if (existing && existing.getAttribute("data-sig") === sig) return;
+
+    container.innerHTML = "";
+    var panel = document.createElement("div");
+    panel.className = "telemetry telemetry-idle";
+    panel.setAttribute("data-sig", sig);
+
+    var head = document.createElement("div");
+    head.className = "tl-head";
+    head.innerHTML =
+      '<span class="tl-dot" aria-hidden="true"></span>' +
+      '<span class="tl-head-title">next scan</span>' +
+      '<span class="tl-head-meta mono">idle</span>';
+    panel.appendChild(head);
+
+    var body = document.createElement("div");
+    body.className = "tl-idle-body";
+
+    var cd = document.createElement("div");
+    cd.className = "tl-countdown mono";
+    cd.setAttribute("data-countdown", "1");
+    cd.textContent = "—";
+    body.appendChild(cd);
+
+    var rows = document.createElement("div");
+    rows.className = "tl-idle-rows";
+    rows.appendChild(row("Scheduled for", U.epochToStr(st.next_scan)));
+    var modeText;
+    if (st.mode === "schedule" && st.schedule) {
+      modeText = st.schedule + (st.tz ? "  (" + st.tz + ")" : "");
+    } else {
+      modeText = "every " + U.humanDuration(st.interval_sec);
+    }
+    rows.appendChild(row("Mode", modeText, null, true));
+    body.appendChild(rows);
+
+    panel.appendChild(body);
+    container.appendChild(panel);
+  }
+
+  /* Update the ticking countdown text. `rem` is seconds until the next scan
+   * (may be negative once due). Driven by a 1s timer in app.js. */
+  function updateCountdown(container, rem, st) {
+    var cd = container.querySelector("[data-countdown]");
+    if (!cd) return;
+    if (rem == null) {
+      cd.textContent = "—";
+      cd.classList.remove("tl-countdown-now");
+    } else if (rem > 0) {
+      cd.textContent = countdownStr(rem);
+      cd.classList.remove("tl-countdown-now");
+    } else {
+      cd.textContent = "starting…";
+      cd.classList.add("tl-countdown-now");
+    }
+  }
+
   global.Stats = {
     renderLive: renderLive,
-    renderFrozen: renderFrozen
+    renderFrozen: renderFrozen,
+    renderIdle: renderIdle,
+    updateCountdown: updateCountdown
   };
 })(window);
