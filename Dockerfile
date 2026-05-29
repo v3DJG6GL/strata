@@ -22,7 +22,7 @@ RUN chmod +x /app/entrypoint.sh /app/scan-loop.sh /var/www/html/cgi-bin/api.cgi
 ENV STRATA_SCAN_PATHS="/mnt/hdd-pool /mnt/ssd-pool" \
     STRATA_SCAN_INTERVAL="86400" \
     STRATA_SCAN_SCHEDULE="" \
-    STRATA_SCAN_PRECOUNT="" \
+    STRATA_SCAN_PRECOUNT="false" \
     STRATA_KEEP_SNAPSHOTS="30" \
     STRATA_SCAN_ON_START="" \
     STRATA_HARDLINK_PRIORITY="" \
