@@ -9,8 +9,17 @@ services:
       # Space-separated directories to scan. Each path must live inside one of
       # the volumes mounted below.
       STRATA_SCAN_PATHS: "/mnt/hdd-pool /mnt/ssd-pool"
-      # Seconds between scans (86400 = once per day).
+      # Seconds between scans (86400 = once per day). Used when no schedule is
+      # set below, and as the fallback if the schedule is invalid.
       STRATA_SCAN_INTERVAL: "86400"
+      # Optional fixed schedule as a 5-field cron expression. When set it
+      # overrides STRATA_SCAN_INTERVAL and fires at these wall-clock times,
+      # DST-aware via TZ. Numeric fields only. Empty = use the interval.
+      #   STRATA_SCAN_SCHEDULE: "0 20 * * *"   # every day at 20:00
+      #   STRATA_SCAN_SCHEDULE: "0 3 * * 0"    # Sundays at 03:00
+      STRATA_SCAN_SCHEDULE: ""
+      # Timezone for the schedule and for timestamps (image bundles tzdata).
+      TZ: "UTC"
       # Number of snapshots to retain; older ones are pruned automatically.
       STRATA_KEEP_SNAPSHOTS: "30"
       # Testing/dev only. If truthy (1/true/yes/on), run a scan immediately on

@@ -35,11 +35,18 @@ the image:
 | Variable                | Default                       | Meaning |
 |-------------------------|-------------------------------|---------|
 | `STRATA_SCAN_PATHS`        | `/mnt/hdd-pool /mnt/ssd-pool`  | Space-separated directories to scan. |
-| `STRATA_SCAN_INTERVAL`     | `86400`                        | Seconds between scans. |
+| `STRATA_SCAN_INTERVAL`     | `86400`                        | Seconds between scans (start-to-start). Used when no schedule is set, and as the fallback if a schedule is invalid. |
+| `STRATA_SCAN_SCHEDULE`     | *(none)*                       | A 5-field cron expression (`min hour day-of-month month day-of-week`). When set, it overrides `STRATA_SCAN_INTERVAL` and scans fire at these wall-clock times (DST-aware, honoring `TZ`). Numeric fields only; supports `*`, lists, ranges and `*/n` steps; standard cron day-of-month/day-of-week OR-semantics. Example: `0 20 * * *` = daily at 20:00. An invalid expression logs a warning and falls back to the interval. |
+| `TZ`                       | `UTC`                          | IANA timezone (e.g. `Europe/Zurich`) used for the schedule and for log/snapshot timestamps. The image bundles `tzdata`. |
 | `STRATA_KEEP_SNAPSHOTS`    | `30`                           | Number of snapshots to retain. |
-| `STRATA_SCAN_ON_START`     | *(none)*                       | Testing/dev. If truthy (`1`/`true`/`yes`/`on`), run a scan on every container start, overriding the recent-snapshot deferral. |
+| `STRATA_SCAN_ON_START`     | *(none)*                       | Testing/dev. If truthy (`1`/`true`/`yes`/`on`), run a scan on every container start, overriding the schedule/deferral. |
 | `STRATA_HARDLINK_PRIORITY` | *(none)*                       | Directories whose hard links are preferred as the counted "original" — one directory per line. |
 | `STRATA_HARDLINK_COPIES`   | *(none)*                       | Directories whose hard links are ranked last and treated as copies — one directory per line. |
+
+When `STRATA_SCAN_SCHEDULE` is set, the first scan after a fresh deploy still
+runs immediately (so the UI isn't empty until the first scheduled time);
+thereafter scans fire only at the scheduled times. A missed time (container
+down, or a previous scan still running) is skipped rather than caught up.
 
 Each path in `STRATA_SCAN_PATHS` must be inside a volume mounted into the
 container (the default compose file mounts `/mnt` read-only).
