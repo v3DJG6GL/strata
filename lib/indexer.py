@@ -336,8 +336,13 @@ def hardlink_copies():
     return _dir_list("STRATA_HARDLINK_COPIES")
 
 
-def run_index(scan_paths, priority, copies, progress_path=None):
-    """Walk every scan path. Returns the detail-tree root node (dict)."""
+def run_index(scan_paths, priority, copies, progress_path=None, precount=False):
+    """Walk every scan path. Returns the detail-tree root node (dict).
+
+    When `precount` is set, a cheap scandir-only pre-pass counts every file
+    first so live progress has an exact denominator. It is off by default
+    because on large spinning-disk trees that second metadata pass can rival
+    the walk itself; the API instead estimates % from the previous snapshot."""
     # _walk / _finalize / _to_node all recurse with the filesystem; lift the
     # guard here so embedding callers inherit it, not just the CLI entry.
     sys.setrecursionlimit(max(sys.getrecursionlimit(), 20000))
@@ -373,22 +378,28 @@ def run_index(scan_paths, priority, copies, progress_path=None):
         except OSError:
             pass
 
-    # Publish a 'counting' doc immediately so the first status poll reads a
-    # valid file the instant the indexer starts (no empty-file window).
-    write_progress("counting", 0, None, "", None, force=True)
+    total = None
+    if precount:
+        # Optional pre-count phase: an exact denominator at the cost of a full
+        # extra metadata pass. It may slightly overshoot the real count (it
+        # counts files whose stat() later fails, which _walk skips); op_status
+        # clamps for that.
+        write_progress("counting", 0, None, "", None, force=True)
 
-    # Phase 1: a cheap scandir-only pre-pass so live progress has an exact
-    # denominator. It may slightly overshoot the real count (it counts files
-    # whose stat() later fails, which _walk skips); op_status clamps for that.
-    def count_progress(n):
-        write_progress("counting", n, None, "", None)
+        def count_progress(n):
+            write_progress("counting", n, None, "", None)
 
-    total = _precount(scan_paths, count_progress)
-    write_progress("counting", total, None, "", total, force=True)
+        total = _precount(scan_paths, count_progress)
+        write_progress("counting", total, None, "", total, force=True)
+        # Reset phase_start so the ETA is measured from when indexing began,
+        # not from the start of counting.
+        phase_start[0] = time.time()
+    else:
+        # No pre-count: publish an 'indexing' doc immediately so the first
+        # status poll reads a valid file (no empty-file window). The API
+        # supplies the denominator from the previous snapshot's file count.
+        write_progress("indexing", 0, None, "", None, force=True)
 
-    # Phase 2: the real inode-aware walk. Reset phase_start so the ETA is
-    # measured from when indexing began, not from the start of counting.
-    phase_start[0] = time.time()
     root = Dir("(scan)", None, 0)
     hardlinks = {}
     ctr = [0, 0]  # [files, dirs]
@@ -474,8 +485,11 @@ def main(argv):
         sys.stderr.write("indexer: STRATA_SCAN_PATHS is empty\n")
         return 1
 
+    precount = os.environ.get("STRATA_SCAN_PRECOUNT", "").strip().lower() in (
+        "1", "true", "yes", "on"
+    )
     detail, totals = run_index(
-        scan_paths, hardlink_priority(), hardlink_copies(), progress
+        scan_paths, hardlink_priority(), hardlink_copies(), progress, precount
     )
 
     with gzip.open(os.path.join(out, "strata-%s.full.json.gz" % ts), "wt") as f:

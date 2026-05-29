@@ -110,6 +110,21 @@ def get_stats(ts):
     return scan_stats.build_stats(artifact(ts, ".totals.json"))
 
 
+def previous_total_files():
+    """File count of the most recent completed snapshot, for the live %
+    estimate. The in-progress scan has no tree.json yet, so the newest listed
+    snapshot is the previous one. Returns None when there is no history."""
+    tslist = list_snapshot_ts()
+    if not tslist:
+        return None
+    try:
+        st = get_stats(tslist[0])
+        tot = (st.get("total") or {}).get("files")
+        return int(tot) if tot else None
+    except Exception:
+        return None
+
+
 def humansize_count(text):
     """Parse a progress count like "1.2M" into an integer (1000-base)."""
     m = re.match(r"\s*([0-9]+(?:\.[0-9]+)?)\s*([KMGT]?)", text or "", re.I)
@@ -255,20 +270,26 @@ def op_status():
     res["phase"] = doc.get("phase")
     res["files"] = doc.get("files")
     res["dirs"] = doc.get("dirs")
-    res["total"] = doc.get("total")
     cur_path = doc.get("path")
     if cur_path:
         res["current_path"] = cur_path
         res["depth"] = max(0, cur_path.count("/"))
 
-    # Percent + ETA only make sense once indexing (post-count) with a total.
-    files, total = res["files"], res["total"]
+    # Denominator: the indexer's exact pre-count if it ran one, otherwise an
+    # estimate from the most recent completed snapshot (the tree is re-scanned
+    # regularly, so day-to-day file counts are stable). This lets us show a %
+    # without a costly pre-count pass over large filesystems.
+    files = res["files"]
+    total = doc.get("total") or previous_total_files()
+    res["total"] = total
+
+    # Percent + ETA only make sense once indexing (a pre-count, if any, is done).
     if res["phase"] == "indexing" and total and files is not None:
         # Clamp below 100: a finished scan is signalled by current-scan.json
-        # disappearing, not by percent hitting 100 (the pre-count can overshoot).
+        # disappearing, not by percent hitting 100 (the estimate may be off).
         res["percent"] = min(99.9, max(0.0, files / total * 100.0))
         ps = doc.get("phase_start_epoch")
-        if ps and files > 0:
+        if ps and files > 0 and total > files:
             el = now - ps
             if el > 0:
                 res["eta_sec"] = int((total - files) / (files / el))

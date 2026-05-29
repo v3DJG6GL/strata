@@ -123,14 +123,18 @@
         U.humanCount(st.files) + " / " + U.humanCount(st.total) + " files";
       wrap.appendChild(sub);
     } else {
-      // counting (or indexing before the total is known) -> indeterminate
+      // No determinate bar: either the optional pre-count phase, or indexing
+      // before a denominator is known (first-ever scan, no history).
       wrap.classList.add("tl-progress-counting");
+      var counting = st.phase === "counting";
       var topc = document.createElement("div");
       topc.className = "tl-progress-top";
       topc.innerHTML =
-        '<span class="tl-progress-label mono">Counting files…</span>' +
+        '<span class="tl-progress-label mono">' +
+        (counting ? "Counting files…" : "Scanning…") + "</span>" +
         '<span class="tl-progress-found mono">' +
-        U.esc(U.humanCount(st.files)) + " found</span>";
+        U.esc(U.humanCount(st.files)) +
+        (counting ? " found" : " scanned") + "</span>";
       wrap.appendChild(topc);
 
       var barc = document.createElement("div");
