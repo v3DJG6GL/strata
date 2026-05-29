@@ -771,6 +771,10 @@
         if (isOther) rowEl.classList.add("sb-row-other");
 
         var name = k.data.name || k.data.path || "/";
+        var cntExact =
+          k.data.count != null && !isNaN(k.data.count)
+            ? U.commaCount(k.data.count) + " items"
+            : "";
         rowEl.innerHTML =
           '<span class="sb-row-bar" style="width:' +
           (ksize / maxKid) * 100 +
@@ -785,7 +789,9 @@
           '<span class="sb-row-pct mono">' +
           U.esc(U.pctStr(ksize, fSize)) +
           "</span>" +
-          '<span class="sb-row-count mono">' +
+          '<span class="sb-row-count mono" title="' +
+          U.esc(cntExact) +
+          '">' +
           U.esc(U.orDash(k.data.count, U.humanCount)) +
           "</span>";
 

@@ -5,24 +5,28 @@
 (function (global) {
   "use strict";
 
-  /* Human-readable byte sizes: binary (1024), 1 decimal place.
-   * Examples: 2.0T, 245.5G, 10.2M, 4.0K, 512
-   * Bytes below 1K are shown as a bare integer (no suffix, no decimal).
+  /* Human-readable byte sizes: binary (1024), 1 decimal place, IEC units.
+   * Examples: 2.0 TiB, 245.5 GiB, 10.2 MiB, 4.0 KiB, 512 B
+   * Because we divide by 1024, the technically correct suffix is the IEC
+   * binary prefix (KiB/MiB/GiB…), not a bare "K/M/G" — that keeps it
+   * unambiguous and consistent with our MiB/s and KiB/s rate labels. A
+   * space separates the number from the unit (NIST style).
+   * Bytes below 1 KiB are shown as a bare integer with a " B" suffix.
    * For axis ticks or other places where two adjacent values must stay
-   * distinguishable at the same suffix (e.g. 91.04T vs 91.21T), use
+   * distinguishable at the same suffix (e.g. 91.04 TiB vs 91.21 TiB), use
    * `humanBytesAtStep` — it derives the decimals from the tick step. */
   function humanBytes(n) {
     if (n == null || isNaN(n)) return "—";
     n = Number(n);
     if (n < 0) return "—";
-    if (n < 1024) return String(Math.round(n));
-    var units = ["K", "M", "G", "T", "P", "E"];
+    if (n < 1024) return Math.round(n) + " B";
+    var units = ["KiB", "MiB", "GiB", "TiB", "PiB", "EiB"];
     var i = -1;
     do {
       n /= 1024;
       i++;
     } while (n >= 1024 && i < units.length - 1);
-    return n.toFixed(1) + units[i];
+    return n.toFixed(1) + " " + units[i];
   }
 
   /* Adaptive byte formatter for axis tick labels or other collision-prone
@@ -43,7 +47,7 @@
       Math.abs(refValue != null ? refValue : value) ||
       Math.abs(step) ||
       1;
-    var units = ["B", "K", "M", "G", "T", "P", "E"];
+    var units = ["B", "KiB", "MiB", "GiB", "TiB", "PiB", "EiB"];
     var k = Math.min(
       units.length - 1,
       Math.max(0, Math.floor(Math.log(ref) / Math.log(1024)))
@@ -53,7 +57,7 @@
     var decimals = scaledStep > 0 ? Math.ceil(-Math.log10(scaledStep)) : 1;
     decimals = Math.min(4, Math.max(0, decimals));
     var s = (value / scale).toFixed(decimals);
-    return k === 0 ? s : s + units[k];
+    return s + " " + units[k];
   }
 
   /* Exact byte count with thousands separators, e.g. "2,199,023,255,552". */
@@ -63,7 +67,11 @@
   }
 
   /* Human-readable counts (files/dirs): decimal (1000), 1 decimal place.
-   * Examples: 1.2M, 340.0K, 812 */
+   * Examples: 1.2M, 340.0K, 812 — K=thousand, M=million, B=billion, T=trillion
+   * (matches Intl/CLDR compact notation: "B" is billion, not bytes).
+   * A bare compact count reads as a byte size ("10.6M" looks like megabytes),
+   * so always pair it with the counted noun — via `countWithNoun` for a
+   * standalone value, or a column header/label that names what it counts. */
   function humanCount(n) {
     if (n == null || isNaN(n)) return "—";
     n = Number(n);
@@ -76,6 +84,16 @@
       i++;
     } while (n >= 1000 && i < units.length - 1);
     return n.toFixed(1) + units[i];
+  }
+
+  /* Compact count paired with the noun it counts, e.g. "10.6M files".
+   * Use wherever a count would otherwise stand alone (no nearby label or
+   * column header), so it can't be misread as a byte size. The space
+   * follows NIST number/unit spacing. Returns "—" when the count is
+   * missing (no dangling noun). */
+  function countWithNoun(n, noun) {
+    var s = humanCount(n);
+    return s === "—" ? s : s + " " + noun;
   }
 
   /* Integer with thousands separators, e.g. "10,418,725". */
@@ -264,6 +282,7 @@
     humanBytesAtStep: humanBytesAtStep,
     exactBytes: exactBytes,
     humanCount: humanCount,
+    countWithNoun: countWithNoun,
     commaCount: commaCount,
     humanDuration: humanDuration,
     pctStr: pctStr,

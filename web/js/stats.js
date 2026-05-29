@@ -17,7 +17,7 @@
   /* ---- low-level builders ------------------------------------------------ */
 
   /* Build one "key value" row. `value` may carry an optional dim suffix. */
-  function row(label, value, suffix, mono) {
+  function row(label, value, suffix, mono, title) {
     var r = document.createElement("div");
     r.className = "tl-row";
 
@@ -30,6 +30,7 @@
     var missing = value == null || value === "" || value === "—";
     if (missing) value = "—";
     v.textContent = value;
+    if (title && !missing) v.title = title;
 
     r.appendChild(k);
     r.appendChild(v);
@@ -133,7 +134,7 @@
         '<span class="tl-progress-label mono">' +
         (counting ? "Counting files…" : "Scanning…") + "</span>" +
         '<span class="tl-progress-found mono">' +
-        U.esc(U.humanCount(st.files)) +
+        U.esc(U.countWithNoun(st.files, "files")) +
         (counting ? " found" : " scanned") + "</span>";
       wrap.appendChild(topc);
 
@@ -222,15 +223,24 @@
       var cells = [
         { t: rt.path || "—", grow: true },
         { t: U.humanBytes(rt.size_actual), mono: true },
-        { t: U.humanCount(rt.files), mono: true },
-        { t: U.humanCount(rt.dirs), mono: true }
+        {
+          t: U.humanCount(rt.files),
+          mono: true,
+          title: rt.files != null ? U.commaCount(rt.files) + " files" : null
+        },
+        {
+          t: U.humanCount(rt.dirs),
+          mono: true,
+          title: rt.dirs != null ? U.commaCount(rt.dirs) + " dirs" : null
+        }
       ];
       cells.forEach(function (c) {
         var el = document.createElement("span");
         el.className =
           "tl-roots-cell" + (c.grow ? " grow" : "") + (c.mono ? " mono" : "");
         el.textContent = c.t;
-        if (c.grow) el.title = c.t;
+        if (c.title) el.title = c.title;
+        else if (c.grow) el.title = c.t;
         r.appendChild(el);
       });
       tbl.appendChild(r);
@@ -297,8 +307,20 @@
       section(
         "Scanned so far",
         [
-          row("Files", st.files_human || U.humanCount(st.files)),
-          row("Directories", st.dirs_human || U.humanCount(st.dirs))
+          row(
+            "Files",
+            st.files_human || U.humanCount(st.files),
+            null,
+            undefined,
+            st.files != null ? U.commaCount(st.files) + " files" : null
+          ),
+          row(
+            "Directories",
+            st.dirs_human || U.humanCount(st.dirs),
+            null,
+            undefined,
+            st.dirs != null ? U.commaCount(st.dirs) + " dirs" : null
+          )
         ],
         "tl-area-scanned"
       )

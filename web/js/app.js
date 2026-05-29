@@ -180,8 +180,20 @@
     /* metric strip */
     var metrics = document.createElement("div");
     metrics.className = "snap-card-metrics";
-    metrics.appendChild(metricCell("Files", U.humanCount(total.files)));
-    metrics.appendChild(metricCell("Dirs", U.humanCount(total.dirs)));
+    metrics.appendChild(
+      metricCell(
+        "Files",
+        U.humanCount(total.files),
+        total.files != null ? U.commaCount(total.files) + " files" : null
+      )
+    );
+    metrics.appendChild(
+      metricCell(
+        "Dirs",
+        U.humanCount(total.dirs),
+        total.dirs != null ? U.commaCount(total.dirs) + " dirs" : null
+      )
+    );
     metrics.appendChild(
       metricCell(
         "Duration",
@@ -236,9 +248,10 @@
     return card;
   }
 
-  function metricCell(label, value) {
+  function metricCell(label, value, title) {
     var c = document.createElement("div");
     c.className = "metric-cell";
+    if (title) c.title = title;
     c.innerHTML =
       '<div class="metric-value mono">' +
       U.esc(value) +
