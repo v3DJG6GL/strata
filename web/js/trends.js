@@ -182,7 +182,7 @@
         if (data.dates[a] < from && data.total[a] != null) { aIdx = a; break; }
       }
       if (aIdx >= 0 && +data.dates[firstKept] > +from) {
-        lead = { date: from, srcDate: data.dates[aIdx], total: data.total[aIdx], roots: {} };
+        lead = { date: from, total: data.total[aIdx], roots: {} };
         data.roots.forEach(function (rt) { lead.roots[rt.path] = rt.values[aIdx]; });
       }
     }
@@ -675,7 +675,7 @@
     });
 
     /* y domain depends on mode + view. The carried lead value is folded in so
-     * the held leading segment never clips outside the axis. */
+     * the carried leading segment never clips outside the axis. */
     var domain;
     if (state.viewMode === "stacked") {
       var sumPerIdx = data.dates.map(function (_, i) {
@@ -1016,7 +1016,7 @@
       visible.forEach(function (r) { obj[r.path] = r.values[i] || 0; });
       return obj;
     });
-    /* held carried row at the window start fills the stack to the left edge */
+    /* carried anchor row at the window start fills the stack to the left edge */
     if (data.lead) {
       var leadRow = { _date: data.lead.date };
       visible.forEach(function (r) { leadRow[r.path] = data.lead.roots[r.path] || 0; });

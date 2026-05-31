@@ -2552,10 +2552,6 @@ button {
   stroke-dasharray: 4 4;
   opacity: 0.35;
 }
-.trend-pt-multi {
-  stroke: var(--bg);
-  stroke-width: 1.5;
-}
 
 /* Stacked area layers — translucent fill, no separator stroke; the shape
  * signal is carried by .trend-layer-edge (a top-boundary line per layer
