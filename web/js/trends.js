@@ -166,6 +166,27 @@
       if (data.dates[i] >= from && data.dates[i] <= to) keep.push(i);
     }
 
+    /* Carry-forward anchor: the most recent snapshot strictly BEFORE the
+     * window start. Storage holds between snapshots, so the value in effect
+     * at the window start is whatever the last prior snapshot measured. The
+     * chart uses this to fill the leading gap (and the Δ panel uses it as the
+     * baseline = "level at the start of the window"). Kept as a separate,
+     * additive object so the real dates/total/roots arrays — and everything
+     * that indexes them (dots, hover bisect, snapshot count, click-to-open)
+     * — stay untouched. Only set when there is an actual leading gap. */
+    var lead = null;
+    if (keep.length) {
+      var firstKept = keep[0];
+      var aIdx = -1;
+      for (var a = firstKept - 1; a >= 0; a--) {
+        if (data.dates[a] < from && data.total[a] != null) { aIdx = a; break; }
+      }
+      if (aIdx >= 0 && +data.dates[firstKept] > +from) {
+        lead = { date: from, srcDate: data.dates[aIdx], total: data.total[aIdx], roots: {} };
+        data.roots.forEach(function (rt) { lead.roots[rt.path] = rt.values[aIdx]; });
+      }
+    }
+
     return {
       dates:  keep.map(function (j) { return data.dates[j]; }),
       labels: keep.map(function (j) { return data.labels[j]; }),
@@ -183,7 +204,8 @@
           latest: lv != null ? lv : rt.latest
         };
       }),
-      window: [from, to]
+      window: [from, to],
+      lead: lead
     };
   }
 
@@ -198,6 +220,48 @@
     if (span < 7 * DAY)   return d3.timeFormat("%b %d %H:%M");  /* May 26 02:00 */
     if (span < 365 * DAY) return d3.timeFormat("%b %d");         /* May 26     */
     return d3.timeFormat("%b %Y");                               /* May 2026   */
+  }
+
+  /* Vertical-gridline boundaries for the x-axis: midnights for short spans,
+   * then week starts and month starts as the span widens, so the lines mark
+   * where days/weeks/months begin without crowding. Local-time intervals
+   * (d3.time*) so boundaries and DST are handled correctly. Hard-capped so a
+   * long custom range can't spray dozens of lines. */
+  function vGridTicks(domain) {
+    var d0 = domain[0], d1 = domain[1];
+    var span = Math.abs(+d1 - +d0), DAY = 86400000;
+    var interval = span <= 21 * DAY ? d3.timeDay
+                 : span <= 70 * DAY ? d3.timeMonday
+                 : d3.timeMonth;
+    var ticks = interval.range(interval.ceil(d0), d1);
+    var MAX = 16;
+    if (ticks.length > MAX) {
+      var step = Math.ceil(ticks.length / MAX);
+      ticks = ticks.filter(function (_, i) { return i % step === 0; });
+    }
+    return ticks;
+  }
+
+  /* X-axis label positions. Align them to the same day/week/month boundaries
+   * as the vertical gridlines (thinned to ≤ ~8) so every label sits on a line;
+   * fall back to d3's default ticks for sub-daily windows where there aren't
+   * enough boundaries. */
+  function labelTicks(x, fallbackN) {
+    var v = vGridTicks(x.domain());
+    if (v.length < 2) return x.ticks(fallbackN);
+    if (v.length <= 8) return v;
+    var step = Math.ceil(v.length / 7);
+    return v.filter(function (_, i) { return i % step === 0; });
+  }
+
+  /* Draw the vertical day/week/month gridlines for an axis, full plot height.
+   * Call early (before the data) so the lines sit behind it. */
+  function drawVGrid(g, x, ih) {
+    g.selectAll("line.trend-vgrid").data(vGridTicks(x.domain())).enter().append("line")
+      .attr("class", "trend-vgrid")
+      .attr("y1", 0).attr("y2", ih)
+      .attr("x1", function (d) { return x(d); })
+      .attr("x2", function (d) { return x(d); });
   }
 
   /* ---------- data shaping --------------------------------------------- */
@@ -599,7 +663,9 @@
      * when the filter yields fewer than 2 snapshots. The chart frame at
      * sparse counts reads as broken; a centered message + widen CTA is
      * cleaner. The Δ panel below also hides itself for the same reason. */
-    if (data.dates.length < 2) {
+    /* A carried lead anchor (see applyRange) counts as a drawable point, so a
+     * window holding only 1 real snapshot + a prior value still renders a line. */
+    if (data.dates.length + (data.lead ? 1 : 0) < 2) {
       drawSparsePanel(slot, container, data.dates.length);
       return;
     }
@@ -608,7 +674,8 @@
       return state.hiddenRoots.indexOf(r.path) < 0;
     });
 
-    /* y domain depends on mode + view */
+    /* y domain depends on mode + view. The carried lead value is folded in so
+     * the held leading segment never clips outside the axis. */
     var domain;
     if (state.viewMode === "stacked") {
       var sumPerIdx = data.dates.map(function (_, i) {
@@ -616,15 +683,30 @@
           return s + (r.values[i] || 0);
         }, 0);
       });
+      if (data.lead) {
+        sumPerIdx.push(visible.reduce(function (s, r) {
+          return s + (data.lead.roots[r.path] || 0);
+        }, 0));
+      }
       var hiS = d3.max(sumPerIdx) || 1;
       domain = [0, hiS * 1.08];
     } else {
       var pool = state.viewMode === "total"
-        ? data.total
+        ? data.total.slice()
         : visible.reduce(function (acc, r) {
             r.values.forEach(function (v) { if (v != null) acc.push(v); });
             return acc;
           }, []);
+      if (data.lead) {
+        if (state.viewMode === "total") {
+          if (data.lead.total != null) pool.push(data.lead.total);
+        } else {
+          visible.forEach(function (r) {
+            var lv = data.lead.roots[r.path];
+            if (lv != null) pool.push(lv);
+          });
+        }
+      }
       if (!pool.length) pool = [0];
       var lo = d3.min(pool), hi = d3.max(pool);
       if (state.yMode === "zero") {
@@ -649,6 +731,9 @@
       .attr("viewBox", [0, 0, W, H_MAIN])
       .attr("preserveAspectRatio", "xMidYMid meet");
     var g = svg.append("g").attr("transform", "translate(" + m.left + "," + m.top + ")");
+
+    /* vertical day/week/month gridlines — drawn first so they sit behind data */
+    drawVGrid(g, x, ih);
 
     /* gridlines */
     var yticks = y.ticks(Y_HINT);
@@ -692,7 +777,7 @@
     /* x labels — span-based format keeps adjacent ticks distinguishable
      * even when two snapshots are on the same calendar day. */
     var xFmt = pickTimeFormat(x.domain());
-    var xticks = x.ticks(Math.min(6, Math.max(2, data.dates.length)));
+    var xticks = labelTicks(x, Math.min(6, Math.max(2, data.dates.length)));
     g.selectAll("text.trend-xlab").data(xticks).enter().append("text")
       .attr("class", "trend-xlab")
       .attr("x", function (d) { return x(d); })
@@ -776,12 +861,70 @@
     slot.appendChild(panel);
   }
 
+  /* Carried-lead renderer: a flat held segment from the window start to the
+   * first real snapshot, drawn dim + dashed so it reads as "carried from the
+   * previous snapshot" rather than measured. Used by the single-series Total
+   * and Δ views; multi-series Lines/Stacked fill the lead via a prepended
+   * anchor on each series instead. carriedY/firstY are data-space values. */
+  function drawCarriedLead(g, x, y, ih, fromDate, firstDate, carriedY, firstY) {
+    var lx0 = x(fromDate), lx1 = x(firstDate), ly = y(carriedY);
+    g.append("path").attr("class", "trend-lead-area")
+      .attr("d", "M" + lx0 + "," + ih + "L" + lx0 + "," + ly +
+                 "L" + lx1 + "," + ly + "L" + lx1 + "," + ih + "Z");
+    g.append("path").attr("class", "trend-lead-line")
+      .attr("d", "M" + lx0 + "," + ly + "L" + lx1 + "," + ly +
+                 "L" + lx1 + "," + y(firstY));
+  }
+
+  /* Active-point focus layer — a snapped vertical crosshair, an enlarged
+   * haloed marker per active point, and a time pill pinned to the x-axis, so
+   * the floating tooltip is unmistakably tied to one datapoint. Reused by
+   * every view mode (and by keyboard focus on the Δ dots). Pointer-inert; all
+   * events still arrive via the brush layer.
+   *   show(px, label, marks): px = snapped x in px, label = its time string,
+   *   marks = [{ y, color }] points to highlight at that x. */
+  function focusLayer(g, ih) {
+    var layer = g.append("g").attr("class", "trend-focus").style("display", "none");
+    var rule = layer.append("line").attr("class", "trend-crosshair")
+      .attr("y1", 0).attr("y2", ih);
+    var marksG = layer.append("g");
+    var pill = layer.append("g").attr("class", "trend-xpill");
+    var pillBg = pill.append("rect").attr("class", "trend-xpill-bg")
+      .attr("y", ih + 6).attr("height", 15).attr("rx", 3);
+    var pillTx = pill.append("text").attr("class", "trend-xpill-tx")
+      .attr("y", ih + 16).attr("text-anchor", "middle");
+    return {
+      show: function (px, label, marks) {
+        layer.style("display", null);
+        rule.attr("x1", px).attr("x2", px);
+        marksG.selectAll("*").remove();
+        (marks || []).forEach(function (mk) {
+          marksG.append("circle").attr("class", "trend-pt-halo")
+            .attr("cx", px).attr("cy", mk.y).attr("r", 11).attr("fill", mk.color);
+          marksG.append("circle").attr("class", "trend-pt-active")
+            .attr("cx", px).attr("cy", mk.y).attr("r", 6).attr("fill", mk.color);
+        });
+        pillTx.text(label || "");
+        var tw = (label ? label.length : 0) * 6.6 + 14;
+        pill.attr("transform", "translate(" + px + ",0)");
+        pillBg.attr("x", -tw / 2).attr("width", tw);
+      },
+      hide: function () { layer.style("display", "none"); }
+    };
+  }
+
   /* ---- total view: one accent line + clickable dots ---- */
   function drawTotal(g, data, x, y, ih, container) {
     var dateMs = data.dateMs;
     var pts = data.dates.map(function (d, i) {
       return { date: d, size: data.total[i], i: i };
     });
+
+    /* fill the leading gap with the value carried from the prior snapshot */
+    if (data.lead && pts.length) {
+      drawCarriedLead(g, x, y, ih, data.lead.date, pts[0].date,
+                      data.lead.total, pts[0].size);
+    }
 
     g.append("path").datum(pts).attr("class", "trend-area")
       .attr("d", d3.area()
@@ -808,6 +951,8 @@
      * tooltip (with delta-to-previous) at the nearest x. Identity-guarded
      * so pointermove only reflows when the nearest index actually changes. */
     var tip = container.querySelector("#trend-tip");
+    var focus = focusLayer(g, ih);
+    var xFmtPill = pickTimeFormat(x.domain());
     var lastI = -1;
     var hover = function (mx, event) {
       var i = d3.bisectCenter(dateMs, +x.invert(mx));
@@ -828,10 +973,11 @@
           '<div class="trend-tip-val mono">' + U.esc(U.humanBytes(p.size)) + dHtml + "</div>" +
           '<div class="trend-tip-hint">' + interactHint() + '</div>';
         tip.style.display = "block";
+        focus.show(x(p.date), xFmtPill(p.date), [{ y: y(p.size), color: "var(--accent)" }]);
       }
       positionTip(container, tip, event);
     };
-    var leave = function () { lastI = -1; tip.style.display = "none"; };
+    var leave = function () { lastI = -1; tip.style.display = "none"; focus.hide(); };
     return { hover: hover, leave: leave };
   }
 
@@ -843,14 +989,25 @@
       .y(function (d) { return y(d.v); })
       .curve(d3.curveMonotoneX);
 
+    /* Prepend the carried anchor so each series fills to the left edge; a null
+     * carried value (root didn't exist before the window) is skipped by the
+     * line's .defined() guard, so that series simply starts at its first point. */
+    function withLead(pts, carriedV) {
+      return data.lead ? [{ date: data.lead.date, v: carriedV }].concat(pts) : pts;
+    }
+
     /* faint total overlay (dashed, dim) so users always see the aggregate */
-    var totalPts = data.dates.map(function (d, i) { return { date: d, v: data.total[i] }; });
+    var totalPts = withLead(
+      data.dates.map(function (d, i) { return { date: d, v: data.total[i] }; }),
+      data.lead && data.lead.total);
     g.append("path").datum(totalPts).attr("class", "trend-total-ghost").attr("d", line);
 
     /* per-root series */
     var series = g.append("g").attr("class", "trend-series-g");
     visible.forEach(function (r) {
-      var pts = data.dates.map(function (d, i) { return { date: d, v: r.values[i] }; });
+      var pts = withLead(
+        data.dates.map(function (d, i) { return { date: d, v: r.values[i] }; }),
+        data.lead && data.lead.roots[r.path]);
       series.append("path")
         .datum(pts)
         .attr("class", "trend-series")
@@ -873,6 +1030,12 @@
       visible.forEach(function (r) { obj[r.path] = r.values[i] || 0; });
       return obj;
     });
+    /* held carried row at the window start fills the stack to the left edge */
+    if (data.lead) {
+      var leadRow = { _date: data.lead.date };
+      visible.forEach(function (r) { leadRow[r.path] = data.lead.roots[r.path] || 0; });
+      rows.unshift(leadRow);
+    }
     var stacked = d3.stack().keys(keys).order(d3.stackOrderInsideOut)(rows);
 
     var areaGen = d3.area()
@@ -907,11 +1070,10 @@
    * Sets up the rule + marks groups and exposes a hover callback consumed
    * by attachBrush. All pointer events arrive via the brush layer. */
   function crosshair(g, data, visible, x, y, ih, container, isStacked) {
-    var rule = g.append("line").attr("class", "trend-crosshair")
-      .attr("y1", 0).attr("y2", ih).style("display", "none");
-    var marks = g.append("g").attr("class", "trend-marks");
+    var focus = focusLayer(g, ih);
     var tip = container.querySelector("#trend-tip");
     var dateMs = data.dateMs;
+    var xFmtPill = pickTimeFormat(x.domain());
 
     /* Identity-guarded: pointermove that lands on the same nearest index
      * only repositions the tip — no DOM remove+append churn on marks or
@@ -921,8 +1083,6 @@
       var i = d3.bisectCenter(dateMs, +x.invert(mx));
       if (i !== lastI) {
         lastI = i;
-        rule.attr("x1", x(data.dates[i])).attr("x2", x(data.dates[i]))
-            .style("display", null);
 
         /* mark dots at hovered x */
         var hits = visible
@@ -930,17 +1090,12 @@
           .filter(function (h) { return h.v != null; })
           .sort(function (a, b) { return b.v - a.v; });
 
-        marks.selectAll("*").remove();
-        if (!isStacked) {
-          hits.forEach(function (h) {
-            marks.append("circle")
-              .attr("class", "trend-pt-multi")
-              .attr("r", 3.5)
-              .attr("cx", x(data.dates[i]))
-              .attr("cy", y(h.v))
-              .attr("fill", assignColor(h.path));
-          });
-        }
+        /* one haloed active marker per series (lines); stacked shows just the
+         * crosshair + pill so the layer boundaries stay readable. */
+        var marks = isStacked ? [] : hits.map(function (h) {
+          return { y: y(h.v), color: assignColor(h.path) };
+        });
+        focus.show(x(data.dates[i]), xFmtPill(data.dates[i]), marks);
 
         var rowsHtml = hits.slice(0, 8).map(function (h) {
           return '<div class="trend-tip-row">' +
@@ -964,8 +1119,7 @@
     };
     var leave = function () {
       lastI = -1;
-      rule.style("display", "none");
-      marks.selectAll("*").remove();
+      focus.hide();
       tip.style.display = "none";
     };
     return { hover: hover, leave: leave };
@@ -1225,19 +1379,31 @@
         return visible.reduce(function (s, r) { return s + (r.values[i] || 0); }, 0);
       });
     }
-    var base = series[0];
+    /* Baseline = the carried level at the window start when a prior snapshot
+     * exists, so "change since baseline" reads as the change across the
+     * selected window. Otherwise the first in-range snapshot (All / no prior). */
+    var leadBase = null;
+    if (data.lead) {
+      leadBase = state.viewMode === "total"
+        ? data.lead.total
+        : data.roots
+            .filter(function (r) { return state.hiddenRoots.indexOf(r.path) < 0; })
+            .reduce(function (s, r) { return s + (data.lead.roots[r.path] || 0); }, 0);
+    }
+    var base = leadBase != null ? leadBase : series[0];
+    var baseDate = leadBase != null ? data.lead.date : data.dates[0];
     var deltas = series.map(function (v) { return v - base; });
 
     /* baseline label — use the same span-based format as the x-axis so a
      * sub-daily window shows time (since the day is unambiguous from the
      * header), and a multi-day window shows date. */
     var baselineFmt = pickTimeFormat([
-      data.dates[0],
+      baseDate,
       data.dates[data.dates.length - 1]
     ]);
     baseLabel.textContent =
       "baseline " + U.humanBytes(base) + " · " +
-      baselineFmt(data.dates[0]);
+      baselineFmt(baseDate);
 
     var iw = W - m.left - m.right,
         ih = H_DELTA - m.top - m.bottom;
@@ -1264,6 +1430,9 @@
       .attr("preserveAspectRatio", "xMidYMid meet");
     var g = svg.append("g").attr("transform", "translate(" + m.left + "," + m.top + ")");
 
+    /* vertical day/week/month gridlines — behind data, aligned with drawMain */
+    drawVGrid(g, x, ih);
+
     /* gridlines + y labels (signed) */
     var yticks = y.ticks(DY_HINT);
     var dyStep = yticks.length > 1
@@ -1289,7 +1458,7 @@
       });
 
     var xFmt = pickTimeFormat(x.domain());
-    var xticks = x.ticks(Math.min(6, Math.max(2, data.dates.length)));
+    var xticks = labelTicks(x, Math.min(6, Math.max(2, data.dates.length)));
     g.selectAll("text.trend-xlab").data(xticks).enter().append("text")
       .attr("class", "trend-xlab")
       .attr("x", function (d) { return x(d); })
@@ -1305,16 +1474,22 @@
       .append("rect").attr("x", 0).attr("y", y(0)).attr("width", iw).attr("height", Math.max(0, ih - y(0)));
 
     var deltaPts = data.dates.map(function (d, i) { return { date: d, v: deltas[i] }; });
+    /* Fill to the left edge: with the carried baseline, Δ is 0 at the window
+     * start, so the line/area simply runs along the zero line until the first
+     * real snapshot. Dots below stay bound to the real points only. */
+    var deltaLinePts = data.lead
+      ? [{ date: data.lead.date, v: 0 }].concat(deltaPts)
+      : deltaPts;
     var areaGen = d3.area()
       .x(function (p) { return x(p.date); })
       .y0(y(0))
       .y1(function (p) { return y(p.v); })
       .curve(d3.curveMonotoneX);
 
-    g.append("path").datum(deltaPts).attr("class", "trend-delta-area pos")
+    g.append("path").datum(deltaLinePts).attr("class", "trend-delta-area pos")
       .attr("clip-path", "url(#trend-clip-pos)")
       .attr("d", areaGen);
-    g.append("path").datum(deltaPts).attr("class", "trend-delta-area neg")
+    g.append("path").datum(deltaLinePts).attr("class", "trend-delta-area neg")
       .attr("clip-path", "url(#trend-clip-neg)")
       .attr("d", areaGen);
 
@@ -1324,7 +1499,7 @@
       .attr("y1", y(0)).attr("y2", y(0));
 
     /* line on top */
-    g.append("path").datum(deltaPts).attr("class", "trend-delta-line")
+    g.append("path").datum(deltaLinePts).attr("class", "trend-delta-line")
       .attr("d", d3.line()
         .x(function (p) { return x(p.date); })
         .y(function (p) { return y(p.v); })
@@ -1350,6 +1525,16 @@
       .attr("fill", function (p) {
         return p.v > 0 ? "var(--green)" : p.v < 0 ? "var(--red)" : "var(--dim)";
       });
+
+    var focus = focusLayer(g, ih);
+    var xFmtPill = pickTimeFormat(x.domain());
+    function deltaColor(v) {
+      return v > 0 ? "var(--green)" : v < 0 ? "var(--red)" : "var(--dim)";
+    }
+    function showFocus(i) {
+      focus.show(x(deltaPts[i].date), xFmtPill(deltaPts[i].date),
+                 [{ y: y(deltaPts[i].v), color: deltaColor(deltaPts[i].v) }]);
+    }
 
     /* renders the Δ tooltip for index i (positioning handled by the caller) */
     function renderDeltaTip(i) {
@@ -1381,12 +1566,14 @@
     });
     /* keyboard focus shows the tooltip anchored at the dot (no pointer pos). */
     dots.on("focus", function (e, p) {
-      renderDeltaTip(deltaPts.indexOf(p));
+      var i = deltaPts.indexOf(p);
+      renderDeltaTip(i);
+      showFocus(i);
       var rect = e.currentTarget.getBoundingClientRect();
       positionTip(container, tip, { clientX: rect.left + rect.width / 2,
                                     clientY: rect.top  + rect.height / 2 });
     });
-    dots.on("blur", function () { tip.style.display = "none"; });
+    dots.on("blur", function () { tip.style.display = "none"; focus.hide(); });
 
     /* brush layer — same unified pointer interaction as the main chart:
      * hover tooltip + click-to-open in inspect mode, drag-to-zoom in zoom
@@ -1394,10 +1581,10 @@
     var lastI = -1;
     var deltaHover = function (mx, event) {
       var i = d3.bisectCenter(data.dateMs, +x.invert(mx));
-      if (i !== lastI) { lastI = i; renderDeltaTip(i); }
+      if (i !== lastI) { lastI = i; renderDeltaTip(i); showFocus(i); }
       positionTip(container, tip, event);
     };
-    var deltaLeave = function () { lastI = -1; tip.style.display = "none"; };
+    var deltaLeave = function () { lastI = -1; tip.style.display = "none"; focus.hide(); };
     attachBrush(g, data, x, iw, ih, container, { hover: deltaHover, leave: deltaLeave });
   }
 

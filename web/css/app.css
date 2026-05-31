@@ -2275,6 +2275,12 @@ button {
   stroke: var(--border-soft);
   stroke-width: 1;
 }
+/* vertical day/week/month gridlines — fainter than the y-grid, behind data */
+.trend-vgrid {
+  stroke: rgba(255, 255, 255, 0.05);
+  stroke-width: 1;
+  pointer-events: none;
+}
 .trend-ylab,
 .trend-xlab {
   font-family: var(--mono);
@@ -2581,6 +2587,47 @@ button {
   stroke-dasharray: 2 3;
   opacity: 0.55;
   pointer-events: none;
+}
+
+/* ---- active-point focus layer (hover/keyboard) -------------------------- *
+ * A snapped crosshair + haloed marker + an x-axis time pill, so the floating
+ * tooltip is unmistakably tied to one datapoint. The whole layer is inert. */
+.trend-focus {
+  pointer-events: none;
+}
+.trend-pt-halo {
+  opacity: 0.22;
+}
+.trend-pt-active {
+  stroke: var(--bg);
+  stroke-width: 1.5;
+}
+.trend-xpill-bg {
+  fill: var(--panel-hi);
+  stroke: var(--border);
+  stroke-width: 1;
+}
+.trend-xpill-tx {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  fill: var(--text-bright);
+}
+
+/* ---- carried lead (Total view) ----------------------------------------- *
+ * The held, dashed segment that fills the gap before the first in-range
+ * snapshot, marked as carried-from-the-previous-snapshot rather than measured.
+ * (Lines/Stacked fill the lead via a prepended anchor on each series.) */
+.trend-lead-area {
+  fill: var(--accent-soft);
+  opacity: 0.5;
+}
+.trend-lead-line {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 3;
+  stroke-linejoin: round;
+  opacity: 0.5;
 }
 
 /* tooltip rows (used by crosshair) */
