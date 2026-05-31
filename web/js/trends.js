@@ -861,21 +861,6 @@
     slot.appendChild(panel);
   }
 
-  /* Carried-lead renderer: a flat held segment from the window start to the
-   * first real snapshot, drawn dim + dashed so it reads as "carried from the
-   * previous snapshot" rather than measured. Used by the single-series Total
-   * and Δ views; multi-series Lines/Stacked fill the lead via a prepended
-   * anchor on each series instead. carriedY/firstY are data-space values. */
-  function drawCarriedLead(g, x, y, ih, fromDate, firstDate, carriedY, firstY) {
-    var lx0 = x(fromDate), lx1 = x(firstDate), ly = y(carriedY);
-    g.append("path").attr("class", "trend-lead-area")
-      .attr("d", "M" + lx0 + "," + ih + "L" + lx0 + "," + ly +
-                 "L" + lx1 + "," + ly + "L" + lx1 + "," + ih + "Z");
-    g.append("path").attr("class", "trend-lead-line")
-      .attr("d", "M" + lx0 + "," + ly + "L" + lx1 + "," + ly +
-                 "L" + lx1 + "," + y(firstY));
-  }
-
   /* Active-point focus layer — a snapped vertical crosshair, an enlarged
    * haloed marker per active point, and a time pill pinned to the x-axis, so
    * the floating tooltip is unmistakably tied to one datapoint. Reused by
@@ -920,20 +905,21 @@
       return { date: d, size: data.total[i], i: i };
     });
 
-    /* fill the leading gap with the value carried from the prior snapshot */
-    if (data.lead && pts.length) {
-      drawCarriedLead(g, x, y, ih, data.lead.date, pts[0].date,
-                      data.lead.total, pts[0].size);
-    }
+    /* Fill the leading gap with the value carried from the prior snapshot — a
+     * smooth continuation to the left edge, matching the Δ panel. The dots stay
+     * bound to the real `pts` below, so no marker lands on the carried anchor. */
+    var linePts = data.lead && pts.length
+      ? [{ date: data.lead.date, size: data.lead.total }].concat(pts)
+      : pts;
 
-    g.append("path").datum(pts).attr("class", "trend-area")
+    g.append("path").datum(linePts).attr("class", "trend-area")
       .attr("d", d3.area()
         .x(function (p) { return x(p.date); })
         .y0(ih)
         .y1(function (p) { return y(p.size); })
         .curve(d3.curveMonotoneX));
 
-    g.append("path").datum(pts).attr("class", "trend-line")
+    g.append("path").datum(linePts).attr("class", "trend-line")
       .attr("d", d3.line()
         .x(function (p) { return x(p.date); })
         .y(function (p) { return y(p.size); })

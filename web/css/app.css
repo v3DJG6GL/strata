@@ -2613,23 +2613,6 @@ button {
   fill: var(--text-bright);
 }
 
-/* ---- carried lead (Total view) ----------------------------------------- *
- * The held, dashed segment that fills the gap before the first in-range
- * snapshot, marked as carried-from-the-previous-snapshot rather than measured.
- * (Lines/Stacked fill the lead via a prepended anchor on each series.) */
-.trend-lead-area {
-  fill: var(--accent-soft);
-  opacity: 0.5;
-}
-.trend-lead-line {
-  fill: none;
-  stroke: var(--accent);
-  stroke-width: 1.5;
-  stroke-dasharray: 3 3;
-  stroke-linejoin: round;
-  opacity: 0.5;
-}
-
 /* tooltip rows (used by crosshair) */
 .trend-tip-row {
   display: grid;
