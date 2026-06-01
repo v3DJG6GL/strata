@@ -182,7 +182,15 @@ def next_run(expr, after_epoch, tzname=None):
         if cur.minute not in minutes:
             cur = cur + timedelta(minutes=1)
             continue
-        return int(cur.replace(tzinfo=tz).timestamp())
+        # A DST fall-back repeats an hour; the naive wall time resolves (fold=0)
+        # to that hour's FIRST occurrence, whose epoch can fall at or before
+        # after_epoch when after_epoch sits in the SECOND occurrence. Skip such a
+        # match so the result is always strictly after after_epoch, as documented
+        # -- otherwise the scan loop would get a past target and busy-rescan.
+        ts = int(cur.replace(tzinfo=tz).timestamp())
+        if ts > after_epoch:
+            return ts
+        cur = cur + timedelta(minutes=1)
 
     raise ValueError("no cron match within %d days for %r" % (_SEARCH_DAYS, expr))
 
