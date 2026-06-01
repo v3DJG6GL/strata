@@ -16,7 +16,7 @@ TZ_NAME="${TZ:-UTC}"
 
 CURRENT_JSON="$DB_DIR/current-scan.json"
 SAMPLES="$DB_DIR/current-scan.samples"
-PROGRESS="$DB_DIR/progress.log"
+PROGRESS="$DB_DIR/progress.json"
 NEXT_JSON="$DB_DIR/next-scan.json"
 LOG="$DB_DIR/scan-loop.log"
 

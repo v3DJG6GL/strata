@@ -31,7 +31,7 @@ import diff
 DB_DIR = os.environ.get("STRATA_DB_DIR", "/var/lib/strata")
 CURRENT_JSON = os.path.join(DB_DIR, "current-scan.json")
 SAMPLES = os.path.join(DB_DIR, "current-scan.samples")
-PROGRESS = os.path.join(DB_DIR, "progress.log")
+PROGRESS = os.path.join(DB_DIR, "progress.json")
 NEXT_JSON = os.path.join(DB_DIR, "next-scan.json")
 
 # \Z (not $) so a trailing newline -- ts=...%0A -- can't slip through the

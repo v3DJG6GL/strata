@@ -36,7 +36,7 @@ import aggregate
 # Directories whose whole subtree is smaller than this are not emitted as
 # their own nodes in the detail tree -- their bytes still count in the parent.
 DETAIL_FLOOR = 1 << 20  # 1 MiB
-# Minimum seconds between progress-log updates.
+# Minimum seconds between progress-file updates.
 PROGRESS_EVERY = 0.7
 
 

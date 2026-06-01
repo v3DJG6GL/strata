@@ -13,7 +13,7 @@ mkdir -p "$DB_DIR"
 
 # A scan interrupted by a container stop leaves transient files behind.
 rm -f "$DB_DIR/current-scan.json" "$DB_DIR/current-scan.samples" || true
-rm -f "$DB_DIR/next-scan.json" "$DB_DIR/progress.log" || true
+rm -f "$DB_DIR/next-scan.json" "$DB_DIR/progress.json" || true
 rm -f "$DB_DIR"/strata-*.tmp 2>/dev/null || true
 
 "$APP_DIR/scan-loop.sh" &
