@@ -120,8 +120,13 @@
 
       var sub = document.createElement("div");
       sub.className = "tl-progress-sub mono";
+      // total is an estimate from the previous snapshot; if the filesystem
+      // grew since then the live count can exceed it. Clamp the denominator so
+      // the line never reads more files than its own total (mirrors the
+      // backend's 99.9% percent cap).
       sub.textContent =
-        U.humanCount(st.files) + " / " + U.humanCount(st.total) + " files";
+        U.humanCount(st.files) + " / " +
+        U.humanCount(Math.max(st.files, st.total)) + " files";
       wrap.appendChild(sub);
     } else {
       // No determinate bar: either the optional pre-count phase, or indexing
