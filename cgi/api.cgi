@@ -125,57 +125,8 @@ def previous_total_files():
         return None
 
 
-def humansize_count(text):
-    """Parse a progress count like "1.2M" into an integer (1000-base)."""
-    m = re.match(r"\s*([0-9]+(?:\.[0-9]+)?)\s*([KMGT]?)", text or "", re.I)
-    if not m:
-        return None
-    mult = {"": 1, "K": 1e3, "M": 1e6, "G": 1e9, "T": 1e12}[m.group(2).upper()]
-    return int(float(m.group(1)) * mult)
-
-
-def _parse_progress_legacy():
-    """Fallback for a pre-upgrade text progress.log (the old 3-line format).
-
-    Returns a doc shaped like the JSON writer's, but with phase/total absent so
-    op_status renders the live panel without a percent meter (graceful)."""
-    try:
-        with open(PROGRESS, "rb") as f:
-            f.seek(0, os.SEEK_END)
-            size = f.tell()
-            f.seek(max(0, size - 8192))
-            tail = f.read().decode("utf-8", "replace")
-    except OSError:
-        return None
-    tail = tail.replace("\r", "\n")
-    files_h = dirs_h = cur_path = None
-    for line in tail.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("At: "):
-            cur_path = stripped[4:] or None
-            continue
-        if "file" not in line or "director" not in line:
-            continue
-        fm = re.search(r"([0-9]+(?:\.[0-9]+)?\s*[KMGT]?)\s*files", line, re.I)
-        dm = re.search(r"([0-9]+(?:\.[0-9]+)?\s*[KMGT]?)\s*director", line, re.I)
-        if fm:
-            files_h = fm.group(1).replace(" ", "")
-        if dm:
-            dirs_h = dm.group(1).replace(" ", "")
-    if files_h is None and dirs_h is None and cur_path is None:
-        return None
-    return {
-        "phase": None,
-        "files": humansize_count(files_h),
-        "dirs": humansize_count(dirs_h),
-        "total": None,
-        "path": cur_path or "",
-        "phase_start_epoch": None,
-    }
-
-
 def parse_progress():
-    """The live progress doc, or None. JSON first; legacy text as a fallback."""
+    """The live progress doc, or None."""
     try:
         with open(PROGRESS) as f:
             doc = json.load(f)
@@ -183,7 +134,7 @@ def parse_progress():
             return doc
     except (OSError, ValueError):
         pass
-    return _parse_progress_legacy()
+    return None
 
 
 def tail_samples(n=2):
@@ -259,7 +210,7 @@ def op_status():
         "server_now": int(now),
         "phase": None,
         "current_path": None, "depth": None,
-        "files": None, "dirs": None, "files_human": None, "dirs_human": None,
+        "files": None, "dirs": None,
         "total": None, "percent": None, "eta_sec": None,
         "cpu_pct": None, "mem_mb": None, "cmem_mb": None, "status_desc": None,
         "read_bytes": None, "write_bytes": None, "read_rate": None, "write_rate": None,

@@ -271,8 +271,8 @@
       "</span>";
     panel.appendChild(head);
 
-    /* progress strip (above the grid) — only when the backend reports a
-     * phase; a legacy text progress.log has phase=null and is skipped. */
+    /* progress strip (above the grid) — only while a scan is actively
+     * counting or indexing (idle/no-scan reports no phase and is skipped). */
     if (st.phase === "counting" || st.phase === "indexing") {
       panel.appendChild(progressStrip(st));
     }
@@ -314,14 +314,14 @@
         [
           row(
             "Files",
-            st.files_human || U.humanCount(st.files),
+            U.humanCount(st.files),
             null,
             undefined,
             st.files != null ? U.commaCount(st.files) + " files" : null
           ),
           row(
             "Directories",
-            st.dirs_human || U.humanCount(st.dirs),
+            U.humanCount(st.dirs),
             null,
             undefined,
             st.dirs != null ? U.commaCount(st.dirs) + " dirs" : null

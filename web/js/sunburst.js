@@ -335,8 +335,9 @@
     }
 
     /* The size value used for layout, honoring the size-type and hard-link
-     * view toggles. Falls back gracefully for trees without the newer
-     * exclusive/copy fields. */
+     * view toggles. The ex/cp null-guards are required by the synthetic
+     * "·files·" wedge (own-files remainder), which carries only size_actual/
+     * size_apparent and no exclusive/copy fields. */
     function nodeSize(data) {
       if (!data) return 0;
       var f = sizeFields(data);
