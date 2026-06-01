@@ -220,7 +220,14 @@ def main(argv):
     cmd = argv[1]
     try:
         if cmd == "validate":
-            parse(argv[2] if len(argv) > 2 else "")
+            expr = argv[2] if len(argv) > 2 else ""
+            parse(expr)  # syntax
+            # Semantic check: a syntactically valid expression can still name a
+            # date that never occurs (e.g. "0 0 30 2 *" -> Feb 30). Resolve the
+            # next run so such expressions are rejected here rather than passing
+            # validation and then failing on every `next` call -- which would
+            # silently degrade the scan loop from schedule to interval cadence.
+            next_run(expr, time.time())
             return 0
         if cmd == "next":
             _cmd_next(argv[2:])
