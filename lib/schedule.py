@@ -40,9 +40,11 @@ _FIELDS = [
     ("day-of-week", 0, 7),
 ]
 
-# A coarse upper bound on the search: 4 years + a day covers the rarest case
-# (`0 0 29 2 *`, a Feb-29 that only the leap year satisfies).
-_SEARCH_DAYS = 366 * 4 + 1
+# A coarse upper bound on the search. The rarest expression is `0 0 29 2 *`
+# (Feb-29), and its worst-case gap is 8 years, not 4: a century year that is
+# not a multiple of 400 is not a leap year, so e.g. 2096-02-29 -> 2104-02-29
+# skips 2100. Eight leap-cycles' worth of days covers it with margin.
+_SEARCH_DAYS = 366 * 8 + 1
 
 
 def _parse_field(token, lo, hi):
