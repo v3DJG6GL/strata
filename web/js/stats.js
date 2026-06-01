@@ -104,7 +104,7 @@
       var top = document.createElement("div");
       top.className = "tl-progress-top";
       top.innerHTML =
-        '<span class="tl-progress-pct mono">≈' + Math.round(pct) + "%</span>" +
+        '<span class="tl-progress-pct mono">≈' + Math.floor(pct) + "%</span>" +
         '<span class="tl-progress-eta mono">ETA ' +
         (st.eta_sec != null ? "~" + U.esc(U.humanDuration(st.eta_sec)) : "—") +
         "</span>";
