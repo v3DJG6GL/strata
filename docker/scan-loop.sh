@@ -124,7 +124,7 @@ os.replace(tmp, os.environ["OUT"])
 #                    preserving the historical start-to-start cadence.
 next_scan_epoch() {  # $1 = iteration start epoch (interval anchor)
   if [ "$MODE" = schedule ]; then
-    python3 "$LIB/schedule.py" next "$SCHEDULE" --after "$(date +%s)" 2>>"$LOG"
+    python3 "$LIB/schedule.py" next "$SCHEDULE" --after "$(date +%s)" --tz "$TZ_NAME" 2>>"$LOG"
   else
     echo $(( $1 + INTERVAL ))
   fi
