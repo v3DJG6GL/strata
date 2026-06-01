@@ -1344,8 +1344,11 @@
 
     /* Δ requires ≥ 2 points to compute "since baseline" — hide the whole
      * sub-panel under sparse filters; the snap-count CTA tells the user
-     * how to widen if they care. */
-    if (!data || data.dates.length < 2) {
+     * how to widen if they care. A carried lead anchor supplies a baseline,
+     * so 1 real snapshot + a prior value still renders a Δ line (the area
+     * runs along zero from the lead, then steps to the point) — mirror
+     * drawMain's guard so the two panels appear/disappear together. */
+    if (!data || data.dates.length + (data.lead ? 1 : 0) < 2) {
       if (deltaSec) deltaSec.hidden = true;
       if (baseLabel) baseLabel.textContent = "";
       return;
