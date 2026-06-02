@@ -29,6 +29,9 @@
   var LABEL_AREA = 0.03; // clutter gate: min (Δy)·(Δx) for a slice to be labelled
   /* Zoom transition duration. */
   var TWEEN_MS = 750;
+  /* Delay before a lazy-load indicator appears — fast/cached fetches resolve
+   * first and show nothing, so only genuinely slow drill-ins surface it. */
+  var SPINNER_DELAY_MS = 250;
 
   function Sunburst(containerEl, opts) {
     opts = opts || {};
@@ -40,6 +43,8 @@
     var sizeKey = "size_actual"; // or "size_apparent"
     var subtreeCache = {}; // path -> children array (lazy fetch cache)
     var pendingFetch = {}; // path -> true while a fetch is in flight
+    var spinnerTimer = 0; // setTimeout id for the debounced loader (0 = unarmed)
+    var loading = false; // true while the center loader is visible
     var totalSize = 1; // scan-total size for "% of scan" tooltip math
     var ringCount = 2; // rings of children rendered at once (2..5)
     var hlMode = "dedupe"; // hard-link view: "dedupe" | "copies" | "exclusive"
@@ -154,6 +159,14 @@
       .append("circle")
       .attr("r", radius)
       .attr("class", "sb-center-circle");
+    /* lazy-load indicator — a quiet arc that spins inside the center disc.
+     * pathLength normalizes the dash math so it stays a single ~90° arc at any
+     * radius (vs. a tiled dash pattern). Sized in applyRings, hidden by default. */
+    var loaderRing = centerG
+      .append("circle")
+      .attr("class", "sb-loader-ring")
+      .attr("pathLength", 100)
+      .style("display", "none");
     /* center text — updateCenter() sizes and positions these explicitly */
     var centerLabel = centerG
       .append("text")
@@ -167,16 +180,6 @@
       .append("text")
       .attr("class", "sb-center-hint")
       .attr("text-anchor", "middle");
-
-    /* spinner ring (shown over a ring while lazily loading) */
-    var spinner = svg
-      .append("g")
-      .attr("class", "sb-spinner")
-      .style("display", "none");
-    var spinnerRing = spinner
-      .append("circle")
-      .attr("r", radius * 1.55)
-      .attr("class", "sb-spinner-ring");
 
     /* arc generator (paddingless inner gap for crispness) */
     var arc = d3
@@ -637,8 +640,15 @@
         },
         { el: centerSub, px: 18, text: U.humanBytes(nodeSize(f.data)) }
       ];
-      if (!atRoot) {
-        cand.push({ el: centerHint, px: 10, text: "↑ click to zoom out" });
+      /* the hint doubles as the loader's label: while loading, show "Loading…"
+       * and never drop the line, so it stays put across the render/zoom that run
+       * between graft and spinner-hide. updateCenter is the single source of truth. */
+      if (!atRoot || loading) {
+        cand.push({
+          el: centerHint,
+          px: 10,
+          text: loading ? "Loading…" : "↑ click to zoom out"
+        });
       }
 
       /* drop trailing lines until the stacked block fits inside the hole */
@@ -1059,7 +1069,15 @@
       }
 
       pendingFetch[path] = true;
-      showSpinner(d);
+      /* Debounce the loader: arm a timer instead of showing it now, so fetches
+       * that beat SPINNER_DELAY_MS resolve with no flash. Armed once; concurrent
+       * fetches share it and the cleanup below clears it when the last lands. */
+      if (!spinnerTimer && !loading) {
+        spinnerTimer = setTimeout(function () {
+          spinnerTimer = 0;
+          if (Object.keys(pendingFetch).length) showSpinner();
+        }, SPINNER_DELAY_MS);
+      }
 
       /* Capture the dataset epoch: setData() between dispatch and resolve
        * replaces rawRoot/subtreeCache/pendingFetch, so the resolved kids
@@ -1085,7 +1103,11 @@
           delete pendingFetch[path];
           /* Refcount via pendingFetch: a concurrent fetch on another arc
            * (different path) keeps the spinner up until the last one lands. */
-          if (Object.keys(pendingFetch).length === 0) hideSpinner();
+          if (Object.keys(pendingFetch).length === 0) {
+            clearTimeout(spinnerTimer);
+            spinnerTimer = 0;
+            hideSpinner();
+          }
         });
     }
 
@@ -1146,11 +1168,16 @@
     }
 
     /* ---- spinner -------------------------------------------------------- */
-    function showSpinner(d) {
-      spinner.style("display", null);
+    function showSpinner() {
+      loading = true;
+      loaderRing.style("display", null);
+      updateCenter(); // repaint the hint as "Loading…"
     }
     function hideSpinner() {
-      spinner.style("display", "none");
+      if (!loading) return;
+      loading = false;
+      loaderRing.style("display", "none");
+      updateCenter(); // restore the hint (also the fetch-failure recovery path)
     }
 
     /* ---- zoom tween ----------------------------------------------------- */
@@ -1232,6 +1259,8 @@
       };
       subtreeCache = {};
       pendingFetch = {};
+      clearTimeout(spinnerTimer); // drop any pending debounced loader from the old tree
+      spinnerTimer = 0;
       hideSpinner(); // a fresh root must not inherit a prior fetch's spinner
       clearHover(); // nor a pinned tooltip / hover classes from the old tree
       buildAndSnap(null, null); // null focus path → reset to root
@@ -1302,7 +1331,7 @@
       ringCount = Math.max(2, Math.min(5, n));
       radius = size / (2 * (ringCount + 1));
       centerCircle.attr("r", radius);
-      spinnerRing.attr("r", radius * (ringCount + 1) * 0.92);
+      loaderRing.attr("r", radius * 0.9); // hugs the inside of the center disc
     }
 
     function onToolbarClick(e) {

@@ -1138,16 +1138,26 @@ button {
   font-family: var(--mono);
 }
 
-/* lazy-load spinner ring */
-.sb-spinner-ring {
+/* lazy-load ring — a quiet arc that spins inside the centre disc, off the data.
+ * pathLength=100 (set in JS) makes the dash a single ~90° arc at any radius. */
+.sb-loader-ring {
   fill: none;
   stroke: var(--accent);
   stroke-width: 3;
   stroke-linecap: round;
-  stroke-dasharray: 60 320;
-  opacity: 0.85;
+  stroke-dasharray: 25 100;
+  opacity: 0.9;
+  transform-box: fill-box; /* spin about the circle's own centre, not the canvas */
   transform-origin: center;
   animation: spin 0.9s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  /* intentional static fallback: a full faint ring instead of a lone spun arc */
+  .sb-loader-ring {
+    animation: none;
+    stroke-dasharray: none;
+    opacity: 0.45;
+  }
 }
 
 /* tooltip */
