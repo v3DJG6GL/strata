@@ -166,6 +166,7 @@
       .append("circle")
       .attr("class", "sb-loader-ring")
       .attr("pathLength", 100)
+      .attr("r", radius * 0.9) // initial size; applyRings keeps it in sync
       .style("display", "none");
     /* center text — updateCenter() sizes and positions these explicitly */
     var centerLabel = centerG
