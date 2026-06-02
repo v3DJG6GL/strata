@@ -1079,9 +1079,13 @@ button {
 .sb-arc-hi {
   filter: brightness(1.22) saturate(1.15);
 }
-.sb-arc-dim {
-  /* element opacity, NOT fill-opacity: keeps already-hidden arcs (outer
-   * rings) invisible instead of forcing them partly visible on hover. */
+/* Dim every arc that is NOT the hovered one or one of its ancestors. Driven by
+ * a single `sb-hovering` class on the container so a hover touches only the
+ * hovered chain in JS (O(depth)) and the browser dims the rest in one native
+ * style pass — instead of O(arc count) classList writes per mouse event.
+ * element opacity, NOT fill-opacity: keeps already-hidden arcs (outer rings)
+ * invisible instead of forcing them partly visible on hover. */
+.sb-arcs.sb-hovering .sb-arc:not(.sb-arc-hi):not(.sb-arc-anc) {
   opacity: 0.3;
 }
 .sb-arc-anc {
@@ -1163,6 +1167,11 @@ button {
 /* tooltip */
 .sb-tip {
   position: fixed;
+  /* positioned via transform (translate) from the top-left, not left/top, so
+   * cursor-tracking is a compositor job and never triggers layout. */
+  top: 0;
+  left: 0;
+  will-change: transform;
   z-index: 999;
   pointer-events: none;
   background: rgba(13, 17, 23, 0.97);

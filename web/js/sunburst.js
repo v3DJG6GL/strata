@@ -27,6 +27,10 @@
   var LABEL_FONT = 13;
   var LABEL_PAD = 10; // radial padding inside a ring band (user units)
   var LABEL_AREA = 0.03; // clutter gate: min (Δy)·(Δx) for a slice to be labelled
+  /* A loose file is only promoted to its own slice above this size (matches the
+   * indexer's FILES_TOP_FLOOR). Files below it stay in the "+N more files"
+   * remainder wedge; the angular fold trims anything still too thin to see. */
+  var PROMOTE_FLOOR = 256 * 1024; // 256 KiB
   /* Zoom transition duration. */
   var TWEEN_MS = 750;
   /* Delay before a lazy-load indicator appears — fast/cached fetches resolve
@@ -49,6 +53,8 @@
     var ringCount = 2; // rings of children rendered at once (2..5)
     var hlMode = "dedupe"; // hard-link view: "dedupe" | "copies" | "exclusive"
     var textK = 1; // (viewBox units) / (rendered px) — counter-scales label text
+    var arcDomByNode = new Map(); // hierarchy node -> its <path> (rebuilt per render)
+    var hoverChain = []; // DOM nodes carrying hi/anc classes for the current hover
 
     /* ---- DOM scaffold --------------------------------------------------- */
     containerEl.classList.add("sb-root");
@@ -222,21 +228,14 @@
     });
     resizeObs.observe(svg.node());
 
-    /* On a container resize the viewBox is unchanged -- only textK (which
-     * counter-scales label fonts) needs updating. Skip the full render's
-     * data joins / breadcrumb / details rebuild. */
+    /* On a container resize the viewBox is unchanged, but textK (which
+     * counter-scales label fonts AND the angular-fold threshold) changes, so
+     * the set of folded slices can shift. Re-fold for the new textK and
+     * re-render (snap — the geometry itself didn't move). foldPass() re-measures
+     * textK itself, so the threshold is always current. */
     function refitOnResize() {
-      measureTextK();
-      gLabels.attr("font-size", labelFontUnits());
-      gLabels
-        .selectAll("text.sb-label")
-        .text(function (d) {
-          return labelFor(d, d.current);
-        })
-        .attr("opacity", function () {
-          return this.textContent ? 1 : 0;
-        });
-      updateCenter();
+      foldPass(focusNode);
+      render(false);
     }
 
     /* ---- color --------------------------------------------------------- */
@@ -261,6 +260,7 @@
     function paintNode(node, hue, sibIndex) {
       var data = node.data || {};
       if (data.other) { node._color = "#6e7681"; return; } // (other) bucket
+      if (data._file) { node._color = "#5a5048"; return; }  // a single big file
       if (data._files) { node._color = "#363b44"; return; } // own-files wedge
       if (node.depth === 0) { node._color = "#30363d"; return; }
       node._color = d3
@@ -295,7 +295,7 @@
       }
       var tops = familyRoot.children || [];
       var realTops = tops.filter(function (d) {
-        return !(d.data && (d.data.other || d.data._files));
+        return !(d.data && (d.data.other || d.data._files || d.data._file));
       });
       var nTop = Math.max(1, realTops.length);
       // each family's hue band stays inside the gap to its neighbours
@@ -304,7 +304,7 @@
       var realIdx = 0;
       tops.forEach(function (top, i) {
         var data = top.data || {};
-        if (data.other || data._files) {
+        if (data.other || data._files || data._file) {
           descendColor(top, START_HUE, band0, i);
           return;
         }
@@ -350,6 +350,16 @@
       return f.base;
     }
 
+    /* May this loose file be promoted to its own leaf slice? It must clear the
+     * size floor and — in exclusive mode — be single-link: a multi-link file's
+     * exclusive bytes are charged at its LCA, not its canonical directory, so a
+     * full-size leaf here would overcount. Multi-link files just stay folded
+     * into the parent's "+N more files" remainder in that view. */
+    function filePromotable(fd) {
+      if (hlMode === "exclusive" && fd.nlink > 1) return false;
+      return nodeSize(fd) >= PROMOTE_FLOOR;
+    }
+
     /* Human label that matches what nodeSize() actually counted, for tip
      * rows whose value is a nodeSize result (the synthetic wedge, and the
      * "Counted" row added to the non-wedge tip in non-dedupe modes). */
@@ -377,20 +387,47 @@
        * mutating rawRoot's child arrays permanently. We build a parallel
        * structure referencing the same data objects. */
       function wrap(dataNode) {
-        var kids = (dataNode.children || []).slice();
+        var kids = dataNode.children || [];
         var node = { data: dataNode, children: [] };
         var ownSize = nodeSize(dataNode);
-        if (kids.length) {
-          var childSum = 0;
-          kids.forEach(function (k) {
-            childSum += nodeSize(k);
-          });
-          kids.forEach(function (k) {
-            node.children.push(wrap(k));
-          });
-          var remainder = ownSize - childSum;
-          /* Only add a "own files" wedge when it is a meaningful slice. */
+
+        var childSum = 0;
+        kids.forEach(function (k) {
+          childSum += nodeSize(k);
+          node.children.push(wrap(k));
+        });
+
+        /* Promote the largest loose files (server-supplied files_top) to their
+         * own leaf slices, so a directory that is mostly one huge file shows
+         * that file instead of burying it in the remainder. */
+        var promotedSum = 0,
+          promotedCount = 0,
+          base = (dataNode.path || "").replace(/\/$/, "");
+        (dataNode.files_top || []).forEach(function (ft) {
+          var fd = {
+            name: ft.name,
+            _file: true,
+            path: base + "/" + ft.name,
+            size_actual: ft.size_actual,
+            size_apparent: ft.size_apparent,
+            nlink: ft.nlink,
+            count: null,
+            children: []
+          };
+          if (!filePromotable(fd)) return;
+          var fsz = nodeSize(fd);
+          promotedSum += fsz;
+          promotedCount += 1;
+          node.children.push({ data: fd, children: [], _leafValue: fsz });
+        });
+
+        /* The own-files remainder wedge ("+N more files"): the parent's own
+         * bytes not held by a child dir or a promoted file. Only meaningful
+         * once the node has any breakdown to sit alongside. */
+        if (node.children.length) {
+          var remainder = ownSize - childSum - promotedSum;
           if (remainder > 0 && remainder > ownSize * 0.001) {
+            var oc = dataNode.own_count;
             node.children.push({
               data: {
                 name: "·files·",
@@ -399,6 +436,9 @@
                 size_actual: remainder,
                 size_apparent: remainder,
                 count: null,
+                /* files left in the wedge = own files minus the promoted ones
+                 * (null when the snapshot predates own_count). */
+                _remainCount: oc != null ? Math.max(0, oc - promotedCount) : null,
                 children: []
               },
               children: [],
@@ -409,6 +449,7 @@
             });
           }
         }
+
         node._leafValue = node.children.length ? 0 : ownSize;
         return node;
       }
@@ -511,10 +552,23 @@
       return lo >= 1 ? name.slice(0, lo) + "…" : "";
     }
 
+    /* The display name for a slice. Real dirs/files use their name; the two
+     * synthetic overflow buckets read "+N folders" / "+N files" so they are
+     * self-explanatory and tell each other apart (a file leaf falls through to
+     * its filename). fitLabel truncates to "+N…" on a narrow arc. */
+    function displayName(data) {
+      if (!data) return "";
+      if (data.other) return "+" + (data.other_dirs || 0) + " folders";
+      if (data._files) {
+        return data._remainCount > 0 ? "+" + data._remainCount + " files" : "files";
+      }
+      return data.name || "";
+    }
+
     /* The label text to draw for a node given a coord set ("" = hidden). */
     function labelFor(node, c) {
       if (!labelFits(c)) return "";
-      return fitLabel(node.data && node.data.name, bandLength(c));
+      return fitLabel(displayName(node.data), bandLength(c));
     }
 
     function labelTransform(d) {
@@ -531,20 +585,168 @@
       );
     }
 
-    /* ---- render --------------------------------------------------------- */
-    function render() {
-      measureTextK(); // keep label font constant px for the current display
-      var nodes = root.descendants().filter(function (d) {
-        return d.depth > 0; // skip synthetic root (it's the center disc)
+    /* ---- focus-aware angular fold -------------------------------------- *
+     * Any sibling whose arc would render thinner than MIN_ARC_PX at the
+     * current focus is "folded" into its parent's overflow bucket: thin dirs
+     * (and the server "(other)") into a "+N folders" bucket, thin files (and
+     * the own-files wedge) into a "+N files" bucket. Folding is recomputed per
+     * focus, so zooming in gives a folded child enough angle to re-appear.
+     * The fold rewrites only the RENDER node-set; the d3 partition geometry is
+     * untouched, so every layout invariant still holds. */
+    var MIN_ARC_PX = 2;
+
+    function isTooThin(c) {
+      var midR = ((c.y0 + c.y1) / 2) * radius;
+      return (c.x1 - c.x0) * midR < MIN_ARC_PX * textK;
+    }
+    function isFileLike(data) {
+      return !!(data && (data._file || data._files));
+    }
+
+    /* A bucket is a synthetic node cached on its parent so its `current` (and
+     * thus its zoom morph) survives across fold passes. */
+    function foldBucketFor(parent, kind) {
+      var key = kind === "dir" ? "_foldDir" : "_foldFile";
+      var b = parent[key];
+      if (!b) {
+        b = { parent: parent, depth: parent.depth + 1 };
+        b.ancestors = function () {
+          return [b].concat(parent.ancestors());
+        };
+        parent[key] = b;
+      }
+      return b;
+    }
+
+    function setBucketGeom(b, x0, x1, y0, y1) {
+      b.target = { x0: x0, x1: x1, y0: y0, y1: y1 };
+      if (!b.current) b.current = b.target; // first appearance: snap
+    }
+
+    function fillDirBucket(b, parent, dirs) {
+      var sa = 0, sk = 0, cnt = 0, dn = 0, truncated = false;
+      dirs.forEach(function (c) {
+        var d = c.data || {};
+        sa += Number(d.size_apparent || 0);
+        sk += Number(d.size_actual || 0);
+        cnt += Number(d.count || 0);
+        dn += d.other ? Number(d.other_dirs || 0) : 1;
+        truncated = truncated || !!d.truncated;
       });
+      b.data = {
+        name: "(other)", other: true, _foldBucket: true,
+        path: parent.data.path, other_dirs: dn,
+        size_actual: sk, size_apparent: sa, count: cnt,
+        truncated: truncated || !!(parent.data && parent.data.truncated),
+        children: []
+      };
+      b._color = "#6e7681";
+      b._foldedKids = dirs;
+    }
+
+    function fillFileBucket(b, parent, files) {
+      var sa = 0, sk = 0, remain = 0;
+      files.forEach(function (c) {
+        var d = c.data || {};
+        sa += Number(d.size_apparent || 0);
+        sk += Number(d.size_actual || 0);
+        remain += d._files ? Number(d._remainCount || 0) : 1; // wedge count vs one file
+      });
+      b.data = {
+        name: "·files·", _files: true, _foldBucket: true,
+        path: parent.data.path,
+        size_actual: sk, size_apparent: sa, count: null,
+        _remainCount: remain, children: []
+      };
+      b._color = "#363b44";
+      b._foldedKids = files;
+    }
+
+    function foldPass(focus) {
+      /* isTooThin compares an arc's on-screen width against MIN_ARC_PX*textK,
+       * and foldPass runs BEFORE render() (which is what normally refreshes
+       * textK). Without this, the very first fold (and the fold after a resize)
+       * would use a stale textK and fold the wrong slices. */
+      measureTextK();
+      root.each(function (d) {
+        d._folded = false;
+      });
+      root.each(function (parent) {
+        parent._dirBucket = null;
+        parent._fileBucket = null;
+        var kids = parent.children;
+        if (!kids || !kids.length) return;
+
+        /* Children sort by value (desc), so every too-thin child is part of
+         * one contiguous tail — its union of spans has no gaps. */
+        var thinDirs = [], thinFiles = [], x0 = Infinity, x1 = -Infinity,
+          y0 = 0, y1 = 0, dirW = 0, fileW = 0;
+        kids.forEach(function (c) {
+          if (!arcVisible(c.target) || !isTooThin(c.target)) return;
+          c._folded = true;
+          if (c.target.x0 < x0) x0 = c.target.x0;
+          if (c.target.x1 > x1) x1 = c.target.x1;
+          y0 = c.target.y0;
+          y1 = c.target.y1;
+          var w = c.target.x1 - c.target.x0;
+          if (isFileLike(c.data)) { thinFiles.push(c); fileW += w; }
+          else { thinDirs.push(c); dirW += w; }
+        });
+        if (!thinDirs.length && !thinFiles.length) return;
+
+        /* split the contiguous tail [x0,x1] between the two buckets by their
+         * summed angular width, so neither overlaps the other. */
+        var cursor = x0;
+        if (thinDirs.length) {
+          var bd = foldBucketFor(parent, "dir");
+          fillDirBucket(bd, parent, thinDirs);
+          setBucketGeom(bd, cursor, cursor + dirW, y0, y1);
+          cursor += dirW;
+          parent._dirBucket = bd;
+        }
+        if (thinFiles.length) {
+          var bf = foldBucketFor(parent, "file");
+          fillFileBucket(bf, parent, thinFiles);
+          setBucketGeom(bf, cursor, x1, y0, y1);
+          parent._fileBucket = bf;
+        }
+      });
+    }
+
+    /* The arcs/labels to render: every unfolded real node plus the active
+     * overflow buckets (skipping the synthetic center root). */
+    function renderNodes() {
+      var out = [];
+      root.each(function (d) {
+        if (d.depth > 0 && !d._folded) out.push(d);
+        if (d._dirBucket) out.push(d._dirBucket);
+        if (d._fileBucket) out.push(d._fileBucket);
+      });
+      return out;
+    }
+
+    /* ---- render --------------------------------------------------------- */
+    /* `animate` true → keyed-join transition: persisting arcs morph
+     * current→target, entering arcs fade in at their target, exiting arcs fade
+     * out. false → snap (setData/relayout/resize). This single path replaced
+     * the old split between render() (snap) and zoomTo() (bespoke morph). */
+    function render(animate) {
+      measureTextK(); // keep label font constant px for the current display
+      var nodes = renderNodes();
+      var dur = animate ? TWEEN_MS : 0;
 
       /* ARCS */
       var paths = gArcs.selectAll("path.sb-arc").data(nodes, nodeKey);
 
       paths
         .exit()
+        .interrupt()
+        /* stop hit-testing immediately so a slice fading out (folded away or
+         * replaced by a rebuild) can't pop a tooltip for a node that is leaving
+         * the view during its TWEEN_MS fade. */
+        .attr("pointer-events", "none")
         .transition()
-        .duration(TWEEN_MS / 2)
+        .duration(animate ? TWEEN_MS : TWEEN_MS / 2)
         .style("opacity", 0)
         .remove();
 
@@ -558,24 +760,91 @@
         .on("click", onArcClick)
         .on("mousemove", onArcMove)
         .on("mouseenter", onArcEnter)
-        .on("mouseleave", onArcLeave);
-
-      var pathsAll = pathsEnter.merge(paths);
-
-      pathsAll
+        .on("mouseleave", onArcLeave)
+        /* entering arcs appear at their target geometry (no stale `current` to
+         * morph from), then fade in when animating. */
+        .each(function (d) {
+          d.current = d.target;
+        })
         .attr("fill", opts.color || colorFor)
-        .attr("fill-opacity", function (d) {
-          return arcVisible(d.current) ? arcOpacity(d) : 0;
-        })
-        .attr("stroke-opacity", function (d) {
-          return arcVisible(d.current) ? 1 : 0;
-        })
-        .attr("pointer-events", function (d) {
-          return arcVisible(d.current) ? "auto" : "none";
-        })
         .attr("d", function (d) {
           return arc(d.current);
+        })
+        .attr("stroke-opacity", function (d) {
+          return arcVisible(d.target) ? 1 : 0;
+        })
+        .attr("pointer-events", function (d) {
+          return arcVisible(d.target) ? "auto" : "none";
+        })
+        .style("opacity", 1)
+        .attr("fill-opacity", function (d) {
+          return animate ? 0 : arcVisible(d.current) ? arcOpacity(d) : 0;
         });
+
+      if (animate) {
+        pathsEnter
+          .transition()
+          .duration(dur)
+          .attr("fill-opacity", function (d) {
+            return arcVisible(d.target) ? arcOpacity(d) : 0;
+          });
+      }
+
+      /* UPDATE (persisting) — recolor instantly (a rebuild may re-hue), then
+       * morph or snap to the destination geometry. */
+      paths.attr("fill", opts.color || colorFor);
+      if (animate) {
+        paths
+          .interrupt()
+          .transition()
+          .duration(dur)
+          .tween("data", function (d) {
+            var i = d3.interpolate(d.current, d.target);
+            return function (tt) {
+              d.current = i(tt);
+            };
+          })
+          .attrTween("d", function (d) {
+            return function () {
+              return arc(d.current);
+            };
+          })
+          .attr("fill-opacity", function (d) {
+            return arcVisible(d.target) ? arcOpacity(d) : 0;
+          })
+          .attr("stroke-opacity", function (d) {
+            return arcVisible(d.target) ? 1 : 0;
+          })
+          .attr("pointer-events", function (d) {
+            return arcVisible(d.target) ? "auto" : "none";
+          });
+      } else {
+        paths
+          .each(function (d) {
+            d.current = d.target;
+          })
+          .attr("d", function (d) {
+            return arc(d.current);
+          })
+          .attr("fill-opacity", function (d) {
+            return arcVisible(d.current) ? arcOpacity(d) : 0;
+          })
+          .attr("stroke-opacity", function (d) {
+            return arcVisible(d.current) ? 1 : 0;
+          })
+          .attr("pointer-events", function (d) {
+            return arcVisible(d.current) ? "auto" : "none";
+          });
+      }
+
+      /* Refresh the node->DOM lookup the hover path uses, and drop any stale
+       * hover highlight referencing arcs that just exited. */
+      var pathsAll = pathsEnter.merge(paths);
+      arcDomByNode = new Map();
+      pathsAll.each(function (d) {
+        arcDomByNode.set(d, this);
+      });
+      setHover(null);
 
       /* LABELS — counter-scaled font; radial spokes fitted to the band */
       gLabels.attr("font-size", labelFontUnits());
@@ -585,19 +854,39 @@
         .enter()
         .append("text")
         .attr("class", "sb-label")
-        .attr("dy", "0.32em");
-      labelsEnter
-        .merge(labels)
+        .attr("dy", "0.32em")
         .attr("transform", function (d) {
           return labelTransform(d.current);
-        })
-        .text(function (d) {
-          return labelFor(d, d.current);
-        })
-        /* element opacity also hides the dark halo of an empty/hidden label */
-        .attr("opacity", function () {
-          return this.textContent ? 1 : 0;
         });
+      var labelsAll = labelsEnter.merge(labels);
+      if (animate) {
+        labelsAll
+          .text(function (d) {
+            return labelFor(d, d.target);
+          })
+          .transition()
+          .duration(dur)
+          .attr("opacity", function () {
+            return this.textContent ? 1 : 0;
+          })
+          .attrTween("transform", function (d) {
+            return function () {
+              return labelTransform(d.current);
+            };
+          });
+      } else {
+        labelsAll
+          .attr("transform", function (d) {
+            return labelTransform(d.current);
+          })
+          .text(function (d) {
+            return labelFor(d, d.current);
+          })
+          /* element opacity also hides the dark halo of an empty/hidden label */
+          .attr("opacity", function () {
+            return this.textContent ? 1 : 0;
+          });
+      }
 
       updateCenter();
       renderCrumbs();
@@ -605,17 +894,24 @@
     }
 
     function nodeKey(d) {
-      /* Stable key across rebuilds: path + name + depth. */
-      return (
-        (d.data && d.data.path) +
-        "|" +
-        (d.data && d.data.name) +
-        "|" +
-        d.depth
-      );
+      /* Stable key across rebuilds: path + name + depth, plus a type tag so a
+       * file leaf, a fold bucket, the real "(other)"/wedge and a real dir never
+       * key-collide and get morphed into one another across a transition. */
+      var data = d.data || {};
+      var t = data._foldBucket
+        ? data.other ? "B" : "W"
+        : data._file
+          ? "F"
+          : data.other
+            ? "O"
+            : data._files
+              ? "w"
+              : "D";
+      return data.path + "|" + data.name + "|" + d.depth + "|" + t;
     }
 
     function arcOpacity(d) {
+      if (d.data && d.data._file) return 0.85; // a promoted file — solid-ish
       if (d.data && d.data._files) return 0.32;
       if (d.data && d.data.other) return 0.7;
       return d.children ? 0.92 : 0.78;
@@ -778,15 +1074,17 @@
         var rowEl = el("button", "sb-row");
         rowEl.type = "button";
         var isFiles = k.data && k.data._files;
+        var isFile = k.data && k.data._file;
         var isOther = k.data && k.data.other;
-        if (isFiles) rowEl.classList.add("sb-row-files");
+        if (isFiles || isFile) rowEl.classList.add("sb-row-files");
         if (isOther) rowEl.classList.add("sb-row-other");
 
-        var name = k.data.name || k.data.path || "/";
+        var name = displayName(k.data) || k.data.path || "/";
+        /* count column: a file leaf is one item; the wedge carries its own
+         * remaining-file count; everything else is the subtree item count. */
+        var cnt = isFile ? 1 : isFiles ? k.data._remainCount : k.data.count;
         var cntExact =
-          k.data.count != null && !isNaN(k.data.count)
-            ? U.commaCount(k.data.count) + " items"
-            : "";
+          cnt != null && !isNaN(cnt) ? U.commaCount(cnt) + " items" : "";
         rowEl.innerHTML =
           '<span class="sb-row-bar" style="width:' +
           (ksize / maxKid) * 100 +
@@ -804,13 +1102,13 @@
           '<span class="sb-row-count mono" title="' +
           U.esc(cntExact) +
           '">' +
-          U.esc(U.orDash(k.data.count, U.humanCount)) +
+          U.esc(U.orDash(cnt, U.humanCount)) +
           "</span>";
 
-        /* Synthetic ·files· wedge isn't navigable — drill() early-returns
-         * on _files. Skip the click handler (and the button affordance)
-         * so the row doesn't look like a dead button. */
-        if (!isFiles) {
+        /* Synthetic wedges and file leaves aren't navigable — drill()
+         * early-returns on them. Skip the click handler (and the button
+         * affordance) so the row doesn't look like a dead button. */
+        if (!isFiles && !isFile) {
           rowEl.addEventListener("click", function () {
             drill(k);
           });
@@ -856,10 +1154,21 @@
           '<div class="sb-tip-note">' +
             U.esc(
               (data.other_dirs != null ? data.other_dirs : "Several") +
-                " smaller directories grouped — click to expand"
+                " smaller folders grouped — click to expand"
             ) +
             "</div>"
         );
+      } else if (data._file) {
+        /* a single promoted file */
+        if (data.nlink > 1) {
+          rows.push(
+            '<div class="sb-tip-note">' +
+              U.esc(
+                "Hard-linked file (" + data.nlink + " links) — bytes counted once"
+              ) +
+              "</div>"
+          );
+        }
       } else if (data._files) {
         /* In dedupe mode the wedge really is just the parent's own files.
          * In exclusive mode it also absorbs bytes shared between sibling
@@ -868,7 +1177,7 @@
          * child — so the wording has to match the active hl-mode. */
         var note =
           hlMode === "exclusive"
-            ? "Bytes exclusive to this directory (held here or shared only across its sibling subtrees)"
+            ? "Files held directly here (bytes exclusive to this directory)"
             : hlMode === "copies"
               ? "Files held directly here, plus hard-link copies unique to this directory"
               : "Files held directly in this directory";
@@ -880,6 +1189,14 @@
         opts.tooltipRows(data).forEach(function (r) {
           rows.push(tipRow(r.k, r.v));
         });
+      } else if (data._file) {
+        /* a single promoted file: show both sizes, its share, and (when
+         * hard-linked) the link count. It is a leaf — no Items/Child dirs. */
+        rows.push(tipRow("On disk", bytesDual(Number(data.size_actual || 0))));
+        rows.push(tipRow("Apparent", bytesDual(Number(data.size_apparent || 0))));
+        rows.push(tipRow("% of parent", U.pctStr(sz, parentSz)));
+        rows.push(tipRow("% of scan", U.pctStr(sz, totalSize)));
+        if (data.nlink > 1) rows.push(tipRow("Hard links", String(data.nlink)));
       } else if (data._files) {
         /* The synthetic wedge stores size_actual === size_apparent ===
          * remainder computed in the *current* sizeKey/hlMode, so the
@@ -887,11 +1204,15 @@
          * least one label is wrong (e.g. "On disk" in apparent mode,
          * or "On disk" in copies/exclusive where the value carries
          * mode-specific accounting). Show one mode-correct row and
-         * skip the always-"—"/always-"0" Items / Child dirs rows. */
+         * skip the always-"—" Child dirs row. */
         var wedgeV = Number(data.size_actual || 0);
         rows.push(tipRow(countedLabel(), bytesDual(wedgeV)));
         rows.push(tipRow("% of parent", U.pctStr(sz, parentSz)));
         rows.push(tipRow("% of scan", U.pctStr(sz, totalSize)));
+        /* the file count the old wedge never had (Issue 3) */
+        if (data._remainCount != null) {
+          rows.push(tipRow("Files", U.commaCount(data._remainCount)));
+        }
       } else {
         /* show both sizes so the Actual/Apparent distinction is always
          * visible — they are equal unless a directory holds sparse or
@@ -974,8 +1295,9 @@
       var y = event.clientY + pad;
       if (x + w > window.innerWidth - 8) x = event.clientX - w - pad;
       if (y + h > window.innerHeight - 8) y = event.clientY - h - pad;
-      tip.style.left = Math.max(8, x) + "px";
-      tip.style.top = Math.max(8, y) + "px";
+      /* transform (composited), not left/top (layout) — see .sb-tip in app.css */
+      tip.style.transform =
+        "translate(" + Math.max(8, x) + "px," + Math.max(8, y) + "px)";
     }
 
     function hideTip() {
@@ -987,36 +1309,49 @@
      * onArcLeave, the lazyLoad pre-graft cleanup, and zoomTo — keeping it in
      * one place is what R15 had to retrofit in lazyLoad after the cache-hit
      * regression. */
+    /* Highlight the hovered arc + its ancestors and flip the container's
+     * `sb-hovering` class; CSS dims everything else. Touches only the hovered
+     * chain (O(depth)) — never all arcs — so hover cost is flat in arc count.
+     * `d === null` clears the highlight. */
+    function setHover(d) {
+      for (var i = 0; i < hoverChain.length; i++) {
+        hoverChain[i].classList.remove("sb-arc-hi", "sb-arc-anc");
+      }
+      hoverChain = [];
+      if (!d) {
+        gArcs.classed("sb-hovering", false);
+        return;
+      }
+      gArcs.classed("sb-hovering", true);
+      d.ancestors().forEach(function (n) {
+        var node = arcDomByNode.get(n);
+        if (!node) return; // off-ring ancestor (focus root & up) — not rendered
+        node.classList.add(n === d ? "sb-arc-hi" : "sb-arc-anc");
+        hoverChain.push(node);
+      });
+    }
+
     function clearHover() {
-      gArcs
-        .selectAll("path.sb-arc")
-        .classed("sb-arc-hi", false)
-        .classed("sb-arc-dim", false)
-        .classed("sb-arc-anc", false);
+      setHover(null);
       hideTip();
     }
 
     function onArcEnter(event, d) {
-      /* identity Set beats nodeKey() string concatenation: hierarchy nodes
-       * are stable references within a build, so one Set lookup per arc
-       * replaces three string composes + map lookups. */
-      var chain = new Set(d.ancestors());
-      gArcs
-        .selectAll("path.sb-arc")
-        .classed("sb-arc-hi", function (n) {
-          return n === d;
-        })
-        .classed("sb-arc-dim", function (n) {
-          return !chain.has(n) && n !== d;
-        })
-        .classed("sb-arc-anc", function (n) {
-          return chain.has(n) && n !== d;
-        });
+      setHover(d);
       showTip(event, d);
     }
 
-    function onArcMove(event, d) {
-      positionTip(event);
+    /* mousemove fires far above 60fps; coalesce repositioning to one per frame
+     * so a fast cursor doesn't queue a layout/transform per event. */
+    var moveRaf = 0,
+      lastMoveEvt = null;
+    function onArcMove(event) {
+      lastMoveEvt = event;
+      if (moveRaf) return;
+      moveRaf = requestAnimationFrame(function () {
+        moveRaf = 0;
+        if (lastMoveEvt) positionTip(lastMoveEvt);
+      });
     }
 
     function onArcLeave() {
@@ -1031,7 +1366,11 @@
     /* Drill into node `d`: lazy-load if needed, else pure zoom tween. */
     function drill(d) {
       var data = d.data || {};
-      if (data._files) return; // synthetic wedge — not navigable
+      if (data._foldBucket) {
+        expandFold(d);
+        return;
+      }
+      if (data._files || data._file) return; // synthetic wedge / file leaf — not navigable
 
       var needFetch =
         (data.other && !subtreeCache[data.path]) ||
@@ -1046,6 +1385,37 @@
       /* Non-truncated (or already-loaded) drill — pure tween.
        * If a node has no children, zoom onto it anyway (shows it as center). */
       zoomTo(d);
+    }
+
+    /* Expand an angular-fold bucket. The folded children already exist in the
+     * hierarchy, so zooming to the parent gives them the full circle and the
+     * next foldPass un-folds them. If the bucket still hides server-truncated
+     * directories (a real "(other)" got folded in), fetch those first — the
+     * subsequent rebuild zooms to the parent and un-folds. */
+    function expandFold(d) {
+      var parent = d.parent;
+      if (!parent) return;
+      var pdata = parent.data || {};
+      if (
+        d.data.other &&
+        pdata.truncated &&
+        opts.fetchSubtree &&
+        pdata.path != null &&
+        !subtreeCache[pdata.path]
+      ) {
+        var realOther = null;
+        (d._foldedKids || []).forEach(function (c) {
+          if (c.data && c.data.other && !c.data._foldBucket) realOther = c;
+        });
+        if (realOther) {
+          lazyLoad(realOther);
+          return;
+        }
+      }
+      /* Already focused at the parent (the bucket is a direct focus child that
+       * still can't fit all its children) — there is nothing further to zoom;
+       * the folded items remain browsable in the details panel. */
+      if (parent !== focusNode) zoomTo(parent);
     }
 
     /* Lazy-load a subtree, graft it in, rebuild and zoom. */
@@ -1181,66 +1551,19 @@
       updateCenter(); // restore the hint (also the fetch-failure recovery path)
     }
 
-    /* ---- zoom tween ----------------------------------------------------- */
+    /* ---- zoom ----------------------------------------------------------- */
+    /* Re-focus on `p`: re-project geometry, recompute the focus-aware fold
+     * (folded children differ at every zoom level), then animate via the keyed
+     * render. Clearing hover first matters because arcs whose target is
+     * invisible have pointer-events flipped to "none", so mouseleave never
+     * fires on whatever the user just clicked. */
     function zoomTo(p, silent) {
       if (!p) return;
       focusNode = p;
       project(p);
-
-      /* Clear any hover highlight before the tween: arcs whose target is
-       * invisible have their pointer-events flipped to "none" below, so
-       * mouseleave never fires on whatever the user just clicked — the
-       * sb-arc-hi/dim/anc classes would otherwise stay stuck on the
-       * destination view until the user hovers another visible arc. */
+      foldPass(p);
       clearHover();
-
-      var t = svg.transition().duration(TWEEN_MS);
-
-      gArcs
-        .selectAll("path.sb-arc")
-        .transition(t)
-        .tween("data", function (d) {
-          var i = d3.interpolate(d.current, d.target);
-          return function (tt) {
-            d.current = i(tt);
-          };
-        })
-        .attrTween("d", function (d) {
-          return function () {
-            return arc(d.current);
-          };
-        })
-        .attr("fill-opacity", function (d) {
-          return arcVisible(d.target) ? arcOpacity(d) : 0;
-        })
-        .attr("stroke-opacity", function (d) {
-          return arcVisible(d.target) ? 1 : 0;
-        })
-        .attr("pointer-events", function (d) {
-          return arcVisible(d.target) ? "auto" : "none";
-        });
-
-      /* Re-fit label text to the destination geometry, then tween position
-       * and fade opacity to the target visibility. */
-      gLabels.attr("font-size", labelFontUnits());
-      gLabels
-        .selectAll("text.sb-label")
-        .text(function (d) {
-          return labelFor(d, d.target);
-        })
-        .transition(t)
-        .attr("opacity", function () {
-          return this.textContent ? 1 : 0;
-        })
-        .attrTween("transform", function (d) {
-          return function () {
-            return labelTransform(d.current);
-          };
-        });
-
-      updateCenter();
-      renderCrumbs();
-      renderDetails();
+      render(true);
 
       /* notify the router (skipped when the router itself drove this focus) */
       if (!silent && opts.onFocusChange) {
@@ -1317,13 +1640,24 @@
       totalSize = nodeSize(rawRoot) || 1;
       focusNode = (focusPath != null && findHierByPath(focusPath)) || root;
       project(focusNode);
+      foldPass(focusNode);
       root.each(function (d) {
         d.current = d.target;
       });
-      render();
-      if (zoomPath) {
-        var target = findHierByPath(zoomPath);
-        if (target && target !== focusNode) zoomTo(target);
+
+      var target = zoomPath ? findHierByPath(zoomPath) : null;
+      if (target && target !== focusNode) {
+        /* base snap, then animate the zoom into the freshly-grafted node */
+        render(false);
+        zoomTo(target);
+      } else if (target === focusNode && target) {
+        /* FM-1: a graft landed while already focused at the parent. The grafted
+         * children are fresh keys (the keyed join sees them as the enter
+         * selection), so an animated render fades/grows them in instead of the
+         * old dead in-place snap. */
+        render(true);
+      } else {
+        render(false);
       }
     }
 

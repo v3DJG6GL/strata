@@ -17,8 +17,13 @@ import json
 import sys
 
 # Overview: the whole filesystem, shallow. Lazy: a drilled subtree, wide.
-OVERVIEW = {"depth_cap": 9, "max_children": 250, "min_size_ratio": 0.0005}
-LAZY = {"depth_cap": 3, "max_children": 600, "min_size_ratio": 0.0}
+# LAZY.max_children is high so a single drill returns a directory's whole child
+# set: the UI caps RENDERED slices by angular width, so there is no benefit to a
+# server-side rank cap -- and a low cap left a residual "(other)" bucket that the
+# client could never expand past (it re-grafted the same capped set forever).
+OVERVIEW = {"depth_cap": 9, "max_children": 250, "min_size_ratio": 0.0005,
+            "files_top_cap": 6}
+LAZY = {"depth_cap": 3, "max_children": 5000, "min_size_ratio": 0.0}
 
 _SUM_FIELDS = (
     "size_actual", "size_apparent",
@@ -38,6 +43,13 @@ def _blank(node):
     }
     for f in _SUM_FIELDS:
         out[f] = node.get(f, 0) or 0
+    # own_count / files_top describe THIS directory's own loose files, so they
+    # ride along unchanged (not summed). The synthetic "(other)" bucket -- built
+    # separately in _aggregate, never via _blank -- deliberately carries neither.
+    if "own_count" in node:
+        out["own_count"] = node.get("own_count", 0) or 0
+    if node.get("files_top"):
+        out["files_top"] = node["files_top"]
     if node.get("other"):
         out["other"] = True
         out["other_dirs"] = node.get("other_dirs", 0)
@@ -55,6 +67,12 @@ def _raw_size(node):
 def _aggregate(node, opts, depth, root_total):
     """Recursively fold one detail-tree node into an overview node."""
     out = _blank(node)
+    # The eagerly-loaded overview tree is served uncompressed, so cap its
+    # per-node files_top; the chart only renders a few file slices per dir, and
+    # the wider lazy (drill-in) response still carries the full list.
+    cap = opts.get("files_top_cap")
+    if cap is not None and out.get("files_top"):
+        out["files_top"] = out["files_top"][:cap]
     kids = node.get("children") or []
 
     if depth >= opts["depth_cap"]:

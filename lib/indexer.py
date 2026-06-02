@@ -25,6 +25,7 @@ CLI:  indexer.py --ts <ts> --out <dir> --progress <file>
 """
 
 import gzip
+import heapq
 import json
 import os
 import re
@@ -36,6 +37,12 @@ import aggregate
 # Directories whose whole subtree is smaller than this are not emitted as
 # their own nodes in the detail tree -- their bytes still count in the parent.
 DETAIL_FLOOR = 1 << 20  # 1 MiB
+# Per-directory, retain the FILES_TOP_K largest loose files (>= FILES_TOP_FLOOR)
+# so the UI can surface big individual files as their own chart slices rather
+# than folding every file into one opaque "own files" wedge. Bounded so the
+# payload stays small even for directories holding millions of files.
+FILES_TOP_K = 12
+FILES_TOP_FLOOR = 256 << 10  # 256 KiB
 # Minimum seconds between progress-file updates.
 PROGRESS_EVERY = 0.7
 
@@ -47,6 +54,7 @@ class Dir:
     __slots__ = (
         "name", "parent", "depth", "children",
         "o_sa", "o_sk", "o_ex_sa", "o_ex_sk", "o_cp_sa", "o_cp_sk", "o_files",
+        "o_files_top",
         "sa", "sk", "ex_sa", "ex_sk", "cp_sa", "cp_sk", "files", "dirs",
     )
 
@@ -59,6 +67,7 @@ class Dir:
         self.o_ex_sa = self.o_ex_sk = 0    # own exclusive (attributed at LCA)
         self.o_cp_sa = self.o_cp_sk = 0    # own redundant-copy bytes
         self.o_files = 0
+        self.o_files_top = []              # min-heap: FILES_TOP_K largest loose files
         self.sa = self.sk = 0
         self.ex_sa = self.ex_sk = 0
         self.cp_sa = self.cp_sk = 0
@@ -77,6 +86,17 @@ def dir_path(d):
     parts.reverse()
     head = parts[0].rstrip("/")
     return head + ("/" + "/".join(parts[1:]) if len(parts) > 1 else "")
+
+
+def _push_top(heap, sk, sa, name, nlink):
+    """Keep the FILES_TOP_K largest loose files in a bounded min-heap, keyed by
+    on-disk size. The tuple is fully comparable (sk, sa, name, nlink), so files
+    of equal size never fall back to comparing an unorderable type."""
+    item = (sk, sa, name, nlink)
+    if len(heap) < FILES_TOP_K:
+        heapq.heappush(heap, item)
+    else:
+        heapq.heappushpop(heap, item)
 
 
 # --------------------------------------------------------------------------
@@ -126,18 +146,24 @@ def _walk(node, path, hardlinks, ctr, progress):
 
             if st.st_nlink > 1:
                 # defer: the canonical link can only be chosen once every
-                # link to this inode has been seen.
+                # link to this inode has been seen. Carry the entry name so the
+                # file can be listed under its canonical directory later.
                 key = (st.st_dev, st.st_ino)
                 rec = hardlinks.get(key)
                 if rec is None:
-                    hardlinks[key] = [sa, sk, [node]]
+                    hardlinks[key] = [sa, sk, [(node, entry.name)]]
                 else:
-                    rec[2].append(node)
+                    rec[2].append((node, entry.name))
             else:
                 node.o_sa += sa
                 node.o_sk += sk
                 node.o_ex_sa += sa
                 node.o_ex_sk += sk
+                # A single-link file is unambiguously owned here (deduped,
+                # exclusive, canonical all coincide), so it can be surfaced as
+                # its own slice without any hard-link accounting caveat.
+                if sk >= FILES_TOP_FLOOR:
+                    _push_top(node.o_files_top, sk, sa, entry.name, 1)
 
             if (ctr[0] & 0x3FFF) == 0:
                 progress(ctr, path)
@@ -241,31 +267,41 @@ def _resolve_hardlinks(hardlinks, priority, copies):
     size), the rest copies, and the exclusive contribution at the LCA."""
     ranked = bool(priority or copies)
     for sa, sk, links in hardlinks.values():
+        # links is a list of (dir node, entry name) for every link seen.
+        nodes = [ln[0] for ln in links]
         # canonical = the best-tier link; ties keep walk order (first seen).
         if ranked:
             # dir_path walks up to the root and link_tier scans the priority
             # list, so precompute both once per link rather than once per
             # min(key=) comparison (matters for inodes with many links, e.g.
             # backup-style snapshot trees).
-            tiers = [link_tier(dir_path(d), priority, copies) for d in links]
-            best = min(range(len(links)), key=lambda i: tiers[i] + (i,))
-            canonical = links[best]
+            tiers = [link_tier(dir_path(n), priority, copies) for n in nodes]
+            best = min(range(len(nodes)), key=lambda i: tiers[i] + (i,))
         else:
-            canonical = links[0]
+            best = 0
+        canonical = nodes[best]
 
         used = False
-        for d in links:
-            if d is canonical and not used:
+        for n in nodes:
+            if n is canonical and not used:
                 used = True
-                d.o_sa += sa
-                d.o_sk += sk
+                n.o_sa += sa
+                n.o_sk += sk
             else:
-                d.o_cp_sa += sa
-                d.o_cp_sk += sk
+                n.o_cp_sa += sa
+                n.o_cp_sk += sk
 
-        lca = _lca(set(links))
+        lca = _lca(set(nodes))
         lca.o_ex_sa += sa
         lca.o_ex_sk += sk
+
+        # The canonical directory owns this inode's deduped bytes, so list the
+        # file there (named by its link in that dir) among its largest files.
+        # nlink>1 lets the UI fold it back into the remainder in exclusive mode,
+        # where the file's exclusive bytes belong to its LCA, not the canonical
+        # dir, and a full-size leaf would overcount.
+        if sk >= FILES_TOP_FLOOR:
+            _push_top(canonical.o_files_top, sk, sa, links[best][1], len(links))
 
 
 # --------------------------------------------------------------------------
@@ -311,6 +347,14 @@ def _to_node(d, path):
         "copy_actual": d.cp_sk,
         "copy_apparent": d.cp_sa,
         "count": d.files,
+        # own_count is files held DIRECTLY here (not the subtree `count`); it is
+        # the item count for the "own files" remainder wedge. files_top lets the
+        # UI promote the largest loose files to their own slices.
+        "own_count": d.o_files,
+        "files_top": [
+            {"name": n, "size_actual": fsk, "size_apparent": fsa, "nlink": nl}
+            for (fsk, fsa, n, nl) in sorted(d.o_files_top, reverse=True)
+        ],
         "truncated": False,
         "children": children,
     }

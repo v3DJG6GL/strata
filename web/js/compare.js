@@ -816,6 +816,7 @@
     var m = state.metric;
 
     if (d.other) return "#5b626d"; // neutral grey aggregate
+    if (d._file) return "#5a5048"; // a single big file
     if (d._files) return "#363b44"; // synthetic "own files" wedge
     if (hierNode.depth === 0) return "#30363d"; // synthetic root
 
@@ -892,11 +893,17 @@
     d = d || {};
     var m = state.metric;
 
+    if (d._file) {
+      return [
+        { k: "Type", v: "File" },
+        { k: "On disk", v: U.humanBytes(num(d.size_actual)) }
+      ];
+    }
     if (d._files) {
       return [{ k: "Type", v: "Files held directly here" }];
     }
     if (d.other) {
-      return [{ k: "Type", v: "Smaller directories grouped" }];
+      return [{ k: "Type", v: "Smaller folders grouped" }];
     }
 
     var status = d.status || "unchanged";
