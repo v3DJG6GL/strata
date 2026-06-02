@@ -145,6 +145,7 @@
         removed: true,
         unchanged: true
       },
+      kinds: { dir: true, file: true }, // show directory / file rows in the table
       threshold: 0, // noise-threshold (chosen-metric units)
       thresholdMax: 1 // slider ceiling, set after data loads
     };
@@ -591,7 +592,11 @@
     band.appendChild(countRow);
 
     /* --- biggest grower / biggest space freed --- */
-    var changes = r.changes || [];
+    /* Directory-only: the headline highlights stay about directories so a single
+     * big file can't displace the directory story (file rows live in the table). */
+    var changes = (r.changes || []).filter(function (c) {
+      return c.kind !== "file";
+    });
     if (changes.length) {
       /* `changes` arrives pre-sorted by self_actual desc. For the chosen
        * metric we re-rank by self-delta so the highlights stay consistent. */
@@ -816,9 +821,12 @@
     var m = state.metric;
 
     if (d.other) return "#5b626d"; // neutral grey aggregate
-    if (d._file) return "#5a5048"; // a single big file
-    if (d._files) return "#363b44"; // synthetic "own files" wedge
+    if (d._files) return "#363b44"; // synthetic "own files" wedge (no single status)
     if (hierNode.depth === 0) return "#30363d"; // synthetic root
+    /* A promoted file leaf carries its own status + d_actual/d_apparent +
+     * base_actual/base_apparent, so it falls through to the same diverging
+     * scale as a directory. Under the count metric a file has no d_count, so
+     * num() yields 0 and it reads neutral — exactly right. */
 
     var status = d.status || "unchanged";
     if (status === "removed") return "#454c57"; // muted grey ghost
@@ -894,10 +902,30 @@
     var m = state.metric;
 
     if (d._file) {
-      return [
+      /* A file has no item count, so under the count metric fall back to the
+       * on-disk size for Was/Now/Δ rather than a meaningless count delta. */
+      var fm = m.isCount ? METRICS.actual : m;
+      var st = d.status || "unchanged";
+      var bV = num(d[fm.nodeBase]);
+      var cV = num(d[fm.nodeCur]);
+      var frows = [
         { k: "Type", v: "File" },
-        { k: "On disk", v: U.humanBytes(num(d.size_actual)) }
+        { k: "Status", v: statusLabel(st) }
       ];
+      if (st === "added") {
+        frows.push({ k: "Was", v: "—" });
+        frows.push({ k: "Now", v: U.humanBytes(cV) });
+      } else if (st === "removed") {
+        frows.push({ k: "Was", v: U.humanBytes(bV) });
+        frows.push({ k: "Now", v: "—" });
+      } else {
+        frows.push({ k: "Was", v: U.humanBytes(bV) });
+        frows.push({ k: "Now", v: U.humanBytes(cV) });
+      }
+      frows.push({ k: "Δ " + fm.sub, v: signedStr(num(d[fm.dField]), fm.fmt) });
+      frows.push({ k: "Δ%", v: deltaPctStr(num(d[fm.dField]), bV) });
+      if (d.nlink > 1) frows.push({ k: "Links", v: String(d.nlink) });
+      return frows;
     }
     if (d._files) {
       return [{ k: "Type", v: "Files held directly here" }];
@@ -958,7 +986,7 @@
 
     var head = el("div", "section-head");
     head.innerHTML =
-      '<h2 class="section-title">Changed directories</h2>' +
+      '<h2 class="section-title">Changes</h2>' +
       '<span class="section-meta mono" id="cmp-row-count"></span>';
     section.appendChild(head);
 
@@ -998,6 +1026,26 @@
       chips.appendChild(chip);
     });
     toolbar.appendChild(chips);
+
+    /* dir / file kind chips (only worth showing once file rows exist) */
+    if (changes.some(function (c) { return c.kind === "file"; })) {
+      var kindChips = el("div", "cmp-filter-chips");
+      [["dir", "folders"], ["file", "files"]].forEach(function (kv) {
+        var chip = el("button", "cmp-fchip");
+        chip.type = "button";
+        chip.setAttribute("aria-pressed", state.kinds[kv[0]] ? "true" : "false");
+        if (!state.kinds[kv[0]]) chip.classList.add("off");
+        chip.innerHTML = '<span class="cmp-fchip-dot"></span>' + U.esc(kv[1]);
+        chip.addEventListener("click", function () {
+          state.kinds[kv[0]] = !state.kinds[kv[0]];
+          chip.classList.toggle("off", !state.kinds[kv[0]]);
+          chip.setAttribute("aria-pressed", state.kinds[kv[0]] ? "true" : "false");
+          refreshTable(state);
+        });
+        kindChips.appendChild(chip);
+      });
+      toolbar.appendChild(kindChips);
+    }
 
     /* noise-threshold slider */
     var sliderWrap = el("div", "cmp-threshold");
@@ -1118,6 +1166,7 @@
     /* filter */
     var rows = all.filter(function (c) {
       if (!state.filters[c.status]) return false;
+      if (state.kinds && state.kinds[c.kind || "dir"] === false) return false;
       if (state.threshold > 0) {
         if (Math.abs(num(c[m.selfField])) < state.threshold) return false;
       }
@@ -1165,9 +1214,14 @@
       (nodes.section && nodes.section.querySelector("#cmp-row-count")) ||
       state.container.querySelector("#cmp-row-count");
     if (countEl) {
+      var nFiles = 0;
+      for (var j = 0; j < rows.length; j++) if (rows[j].kind === "file") nFiles++;
+      var nDirs = rows.length - nFiles;
       countEl.textContent =
-        rows.length +
-        (rows.length === 1 ? " directory" : " directories") +
+        (nFiles
+          ? nDirs + (nDirs === 1 ? " dir" : " dirs") + " · " +
+            nFiles + (nFiles === 1 ? " file" : " files")
+          : rows.length + (rows.length === 1 ? " directory" : " directories")) +
         (rows.length !== all.length ? " of " + all.length : "");
     }
   }
@@ -1279,17 +1333,22 @@
       : signedStr(itemsVal, U.commaCount);
     var itemsDir = m.isCount ? "flat" : dirClass(itemsVal);
 
+    var isFile = c.kind === "file";
     return (
       '<tr class="cmp-row cmp-row-' +
       status +
+      (isFile ? " cmp-row-file" : "") +
+      /* a file row focuses its containing directory, so the file is shown among
+       * its siblings rather than as an empty center disc. */
       '" data-path="' +
-      U.esc(c.path || "") +
+      U.esc((isFile ? dirOf(c.path) : c.path) || "") +
       '">' +
       /* path */
       '<td class="cmp-td cmp-td-path">' +
       '<span class="cmp-path-rail cmp-rail-' +
       status +
       '" aria-hidden="true"></span>' +
+      (isFile ? '<span class="cmp-tag-file">file</span>' : "") +
       '<span class="cmp-path-name mono">' +
       U.esc(c.name || "/") +
       "</span>" +

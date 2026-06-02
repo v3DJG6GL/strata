@@ -37,12 +37,21 @@ import aggregate
 # Directories whose whole subtree is smaller than this are not emitted as
 # their own nodes in the detail tree -- their bytes still count in the parent.
 DETAIL_FLOOR = 1 << 20  # 1 MiB
-# Per-directory, retain the FILES_TOP_K largest loose files (>= FILES_TOP_FLOOR)
-# so the UI can surface big individual files as their own chart slices rather
-# than folding every file into one opaque "own files" wedge. Bounded so the
-# payload stays small even for directories holding millions of files.
-FILES_TOP_K = 12
-FILES_TOP_FLOOR = 256 << 10  # 256 KiB
+# Per-directory, retain individual loose files so the UI can surface big files
+# as their own chart slices rather than folding every file into one opaque "own
+# files" wedge. A file is kept if it is among the STRATA_FILE_TOP biggest (rank
+# rule, candidates >= FILES_TOP_FLOOR) OR at least STRATA_FILE_FLOOR bytes (size
+# rule) -- the union. own_count stays exact regardless of what is kept.
+FILES_TOP_K = 12             # default STRATA_FILE_TOP
+FILES_TOP_FLOOR = 256 << 10  # 256 KiB: a tiny file is never a "biggest" candidate
+# Hard ceiling on files stored per directory even under a low size floor, so a
+# pathological directory can't blow up indexer memory / the snapshot. The file
+# *count* (own_count) is unaffected -- only the browsable list is bounded.
+FILES_STORE_CEILING = 50_000
+# Live config, set once from the environment in run_index (read here, never in
+# the per-file hot loop): top-K count and the optional size floor (None = off).
+_file_top = FILES_TOP_K
+_file_floor = None
 # Minimum seconds between progress-file updates.
 PROGRESS_EVERY = 0.7
 
@@ -54,7 +63,7 @@ class Dir:
     __slots__ = (
         "name", "parent", "depth", "children",
         "o_sa", "o_sk", "o_ex_sa", "o_ex_sk", "o_cp_sa", "o_cp_sk", "o_files",
-        "o_files_top",
+        "o_files_top", "o_files_floor",
         "sa", "sk", "ex_sa", "ex_sk", "cp_sa", "cp_sk", "files", "dirs",
     )
 
@@ -67,7 +76,8 @@ class Dir:
         self.o_ex_sa = self.o_ex_sk = 0    # own exclusive (attributed at LCA)
         self.o_cp_sa = self.o_cp_sk = 0    # own redundant-copy bytes
         self.o_files = 0
-        self.o_files_top = []              # min-heap: FILES_TOP_K largest loose files
+        self.o_files_top = []              # min-heap: top-K largest loose files (rank rule)
+        self.o_files_floor = []            # min-heap: loose files >= floor (size rule)
         self.sa = self.sk = 0
         self.ex_sa = self.ex_sk = 0
         self.cp_sa = self.cp_sk = 0
@@ -88,15 +98,26 @@ def dir_path(d):
     return head + ("/" + "/".join(parts[1:]) if len(parts) > 1 else "")
 
 
-def _push_top(heap, sk, sa, name, nlink):
-    """Keep the FILES_TOP_K largest loose files in a bounded min-heap, keyed by
-    on-disk size. The tuple is fully comparable (sk, sa, name, nlink), so files
-    of equal size never fall back to comparing an unorderable type."""
+def _bounded_push(heap, cap, sk, sa, name, nlink):
+    """Keep the `cap` largest entries in a bounded min-heap, keyed by on-disk
+    size. The tuple is fully comparable (sk, sa, name, nlink), so files of equal
+    size never fall back to comparing an unorderable type."""
     item = (sk, sa, name, nlink)
-    if len(heap) < FILES_TOP_K:
+    if len(heap) < cap:
         heapq.heappush(heap, item)
     else:
         heapq.heappushpop(heap, item)
+
+
+def _keep_file(node, sk, sa, name, nlink):
+    """Record a loose file for `node`'s 'largest files' lists: the top-K biggest
+    (rank rule) and/or every file >= the configured size floor (size rule). The
+    two heaps are unioned (deduped by name) at serialization. own_count is
+    counted separately and stays exact no matter what these lists keep."""
+    if _file_top > 0 and sk >= FILES_TOP_FLOOR:
+        _bounded_push(node.o_files_top, _file_top, sk, sa, name, nlink)
+    if _file_floor is not None and sk >= _file_floor:
+        _bounded_push(node.o_files_floor, FILES_STORE_CEILING, sk, sa, name, nlink)
 
 
 # --------------------------------------------------------------------------
@@ -162,8 +183,7 @@ def _walk(node, path, hardlinks, ctr, progress):
                 # A single-link file is unambiguously owned here (deduped,
                 # exclusive, canonical all coincide), so it can be surfaced as
                 # its own slice without any hard-link accounting caveat.
-                if sk >= FILES_TOP_FLOOR:
-                    _push_top(node.o_files_top, sk, sa, entry.name, 1)
+                _keep_file(node, sk, sa, entry.name, 1)
 
             if (ctr[0] & 0x3FFF) == 0:
                 progress(ctr, path)
@@ -300,8 +320,7 @@ def _resolve_hardlinks(hardlinks, priority, copies):
         # nlink>1 lets the UI fold it back into the remainder in exclusive mode,
         # where the file's exclusive bytes belong to its LCA, not the canonical
         # dir, and a full-size leaf would overcount.
-        if sk >= FILES_TOP_FLOOR:
-            _push_top(canonical.o_files_top, sk, sa, links[best][1], len(links))
+        _keep_file(canonical, sk, sa, links[best][1], len(links))
 
 
 # --------------------------------------------------------------------------
@@ -351,13 +370,27 @@ def _to_node(d, path):
         # the item count for the "own files" remainder wedge. files_top lets the
         # UI promote the largest loose files to their own slices.
         "own_count": d.o_files,
-        "files_top": [
-            {"name": n, "size_actual": fsk, "size_apparent": fsa, "nlink": nl}
-            for (fsk, fsa, n, nl) in sorted(d.o_files_top, reverse=True)
-        ],
+        "files_top": _union_files(d),
         "truncated": False,
         "children": children,
     }
+
+
+def _union_files(d):
+    """The serialized 'largest files' list for a directory: the union of the
+    rank heap (top-K) and the size-floor heap, deduped by name (filenames are
+    unique within a directory) and sorted largest-first."""
+    by_name = {}
+    for (fsk, fsa, name, nl) in d.o_files_top:
+        by_name[name] = (fsk, fsa, nl)
+    for (fsk, fsa, name, nl) in d.o_files_floor:
+        by_name[name] = (fsk, fsa, nl)
+    return [
+        {"name": name, "size_actual": fsk, "size_apparent": fsa, "nlink": nl}
+        for name, (fsk, fsa, nl) in sorted(
+            by_name.items(), key=lambda kv: kv[1][0], reverse=True
+        )
+    ]
 
 
 # --------------------------------------------------------------------------
@@ -380,13 +413,55 @@ def hardlink_copies():
     return _dir_list("STRATA_HARDLINK_COPIES")
 
 
-def run_index(scan_paths, priority, copies, progress_path=None, precount=False):
+def _parse_size(raw):
+    """Parse a human size ('512K', '100M', '1G', '0') into bytes (base-1024, to
+    match the app's IEC labels). '0' -> 0 (every file). Empty/unset/invalid ->
+    None (size floor disabled)."""
+    s = (raw or "").strip()
+    if not s:
+        return None
+    m = re.match(r"^(\d+(?:\.\d+)?)\s*([KMGT]?)(?:i?B)?$", s, re.IGNORECASE)
+    if not m:
+        sys.stderr.write("indexer: invalid STRATA_FILE_FLOOR %r; ignoring\n" % raw)
+        return None
+    mult = {"": 1, "K": 1 << 10, "M": 1 << 20, "G": 1 << 30, "T": 1 << 40}
+    return int(float(m.group(1)) * mult[m.group(2).upper()])
+
+
+def file_top():
+    """How many of the largest loose files to keep per directory (0 = none)."""
+    raw = os.environ.get("STRATA_FILE_TOP", "").strip()
+    if not raw:
+        return FILES_TOP_K
+    try:
+        return max(0, int(raw))
+    except ValueError:
+        sys.stderr.write(
+            "indexer: invalid STRATA_FILE_TOP %r; using %d\n" % (raw, FILES_TOP_K)
+        )
+        return FILES_TOP_K
+
+
+def file_floor():
+    """Size floor: additionally store every loose file at least this big (bytes),
+    or None when STRATA_FILE_FLOOR is unset/invalid."""
+    return _parse_size(os.environ.get("STRATA_FILE_FLOOR"))
+
+
+def run_index(scan_paths, priority, copies, progress_path=None, precount=False,
+              file_top_k=FILES_TOP_K, file_floor_bytes=None):
     """Walk every scan path. Returns the detail-tree root node (dict).
 
     When `precount` is set, a cheap scandir-only pre-pass counts every file
     first so live progress has an exact denominator. It is off by default
     because on large spinning-disk trees that second metadata pass can rival
     the walk itself; the API instead estimates % from the previous snapshot."""
+    # Publish the per-file retention config for _keep_file (read once here, not
+    # in the hot loop). Embedding callers get the defaults unless they pass them.
+    global _file_top, _file_floor
+    _file_top = file_top_k
+    _file_floor = file_floor_bytes
+
     # _walk / _finalize / _to_node all recurse with the filesystem; lift the
     # guard here so embedding callers inherit it, not just the CLI entry.
     sys.setrecursionlimit(max(sys.getrecursionlimit(), 20000))
@@ -533,7 +608,8 @@ def main(argv):
         "1", "true", "yes", "on"
     )
     detail, totals = run_index(
-        scan_paths, hardlink_priority(), hardlink_copies(), progress, precount
+        scan_paths, hardlink_priority(), hardlink_copies(), progress, precount,
+        file_top(), file_floor()
     )
 
     with gzip.open(os.path.join(out, "strata-%s.full.json.gz" % ts), "wt") as f:

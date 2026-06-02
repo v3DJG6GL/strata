@@ -27,10 +27,6 @@
   var LABEL_FONT = 13;
   var LABEL_PAD = 10; // radial padding inside a ring band (user units)
   var LABEL_AREA = 0.03; // clutter gate: min (Δy)·(Δx) for a slice to be labelled
-  /* A loose file is only promoted to its own slice above this size (matches the
-   * indexer's FILES_TOP_FLOOR). Files below it stay in the "+N more files"
-   * remainder wedge; the angular fold trims anything still too thin to see. */
-  var PROMOTE_FLOOR = 256 * 1024; // 256 KiB
   /* Zoom transition duration. */
   var TWEEN_MS = 750;
   /* Delay before a lazy-load indicator appears — fast/cached fetches resolve
@@ -350,14 +346,15 @@
       return f.base;
     }
 
-    /* May this loose file be promoted to its own leaf slice? It must clear the
-     * size floor and — in exclusive mode — be single-link: a multi-link file's
-     * exclusive bytes are charged at its LCA, not its canonical directory, so a
-     * full-size leaf here would overcount. Multi-link files just stay folded
-     * into the parent's "+N more files" remainder in that view. */
+    /* May this loose file be promoted to its own leaf slice? The server already
+     * decided which files to surface (STRATA_FILE_TOP / STRATA_FILE_FLOOR) and
+     * capped the served list, so every entry is a candidate — the angular fold
+     * trims anything too thin to see. The one exception is exclusive mode: a
+     * multi-link file's exclusive bytes are charged at its LCA, not its
+     * canonical directory, so a full-size leaf would overcount — keep those
+     * folded into the parent's "+N more files" remainder. */
     function filePromotable(fd) {
-      if (hlMode === "exclusive" && fd.nlink > 1) return false;
-      return nodeSize(fd) >= PROMOTE_FLOOR;
+      return !(hlMode === "exclusive" && fd.nlink > 1);
     }
 
     /* Human label that matches what nodeSize() actually counted, for tip
@@ -414,11 +411,26 @@
             count: null,
             children: []
           };
+          /* Compare mode tags each file entry with diff fields; carry them onto
+           * the leaf so opts.color / opts.tooltipRows can read them. Absent on
+           * the normal scan path — purely additive there. */
+          if (ft.status != null) {
+            fd.status = ft.status;
+            fd.base_actual = ft.base_actual;
+            fd.base_apparent = ft.base_apparent;
+            fd.d_actual = ft.d_actual;
+            fd.d_apparent = ft.d_apparent;
+          }
           if (!filePromotable(fd)) return;
           var fsz = nodeSize(fd);
+          node.children.push({ data: fd, children: [], _leafValue: fsz });
+          /* A compare-mode "removed" file is a ghost laid out at its OLD size
+           * (like a removed directory); it is not part of THIS snapshot's own
+           * bytes/count, so it must not be subtracted from the remainder wedge —
+           * otherwise "+N files" undercounts the files that actually remain. */
+          if (fd.status === "removed") return;
           promotedSum += fsz;
           promotedCount += 1;
-          node.children.push({ data: fd, children: [], _leafValue: fsz });
         });
 
         /* The own-files remainder wedge ("+N more files"): the parent's own
@@ -1069,12 +1081,25 @@
       }
 
       var maxKid = nodeSize(kids[0].data) || 1;
+      /* A directory served with a low file floor can carry hundreds of file
+       * leaves; list the biggest DETAILS_FILE_CAP individually (rows are sorted
+       * by size) and summarise the rest so the panel can't balloon. */
+      var DETAILS_FILE_CAP = 50;
+      var fileRows = 0, filesSkipped = 0, fileBytesSkipped = 0;
       kids.forEach(function (k) {
+        var isFile = k.data && k.data._file;
+        if (isFile) {
+          if (fileRows >= DETAILS_FILE_CAP) {
+            filesSkipped += 1;
+            fileBytesSkipped += nodeSize(k.data);
+            return;
+          }
+          fileRows += 1;
+        }
         var ksize = nodeSize(k.data);
         var rowEl = el("button", "sb-row");
         rowEl.type = "button";
         var isFiles = k.data && k.data._files;
-        var isFile = k.data && k.data._file;
         var isOther = k.data && k.data.other;
         if (isFiles || isFile) rowEl.classList.add("sb-row-files");
         if (isOther) rowEl.classList.add("sb-row-other");
@@ -1123,6 +1148,14 @@
         rowEl.addEventListener("mouseleave", hideTip);
         list.appendChild(rowEl);
       });
+
+      if (filesSkipped > 0) {
+        var more = el("div", "sb-details-more");
+        more.textContent =
+          "and " + U.commaCount(filesSkipped) + " more files · " +
+          U.humanBytes(fileBytesSkipped);
+        list.appendChild(more);
+      }
     }
 
     function stat(label, value) {

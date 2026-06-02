@@ -1274,6 +1274,13 @@ button {
   font-size: 12px;
   padding: 10px 2px;
 }
+/* summary line shown when the per-directory file list is capped */
+.sb-details-more {
+  color: var(--dim);
+  font-size: 12px;
+  padding: 6px 2px 2px;
+  text-align: right;
+}
 
 /* a children row with a proportional bar */
 .sb-row {
@@ -2187,6 +2194,20 @@ button {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+/* a small marker distinguishing a file row from a directory row */
+.cmp-tag-file {
+  display: inline-block;
+  margin-right: 5px;
+  padding: 0 5px;
+  border-radius: 3px;
+  background: #4a4640;
+  color: var(--text-bright);
+  font-size: 9.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  vertical-align: 1px;
 }
 
 /* status chip */

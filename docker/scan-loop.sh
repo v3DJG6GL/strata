@@ -90,7 +90,8 @@ prune() {
   local old base
   ls -1t "$DB_DIR"/strata-*.tree.json 2>/dev/null | tail -n +"$((KEEP + 1))" | while read -r old; do
     base="${old%.tree.json}"
-    rm -f "$base".tree.json "$base".full.json.gz "$base".stats.json "$base".totals.json
+    rm -f "$base".tree.json "$base".full.json.gz "$base".stats.json \
+          "$base".totals.json "$base".compare.json
     log "pruned $(basename "$base")"
   done
 }

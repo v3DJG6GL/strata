@@ -27,6 +27,22 @@ services:
       STRATA_SCAN_PRECOUNT: "false"
       # Number of snapshots to retain; older ones are pruned automatically.
       STRATA_KEEP_SNAPSHOTS: "30"
+      # How individual files are surfaced (as their own chart slices, browsable,
+      # and in Compare). Directory totals and file COUNTS are always exact; these
+      # only tune which files are stored individually. A file is kept if it is
+      # among the STRATA_FILE_TOP biggest in its folder OR at least
+      # STRATA_FILE_FLOOR bytes -- the two combine (union).
+      #   STRATA_FILE_TOP   : how many of the biggest files per folder to keep
+      #                       (default 12; 0 = none).
+      #   STRATA_FILE_FLOOR : also store every file at least this big
+      #                       (e.g. 100M, 1G; empty = off; 0 = every file).
+      # Defaults reproduce the lean original behaviour. A very low or 0 floor on
+      # a tree with millions of files is "DUC parity": it stores every file and
+      # costs roughly +250 MB indexer RAM and +75 MB snapshot per 5M files (the
+      # browsable list is also capped at 50,000 files/folder as a guard). Use a
+      # non-zero floor on very large file-count trees.
+      STRATA_FILE_TOP: "12"
+      STRATA_FILE_FLOOR: ""
       # Testing/dev only. If truthy (1/true/yes/on), run a scan immediately on
       # every container start/restart, overriding the recent-snapshot deferral
       # (a normal start defers the first scan when a recent snapshot exists).

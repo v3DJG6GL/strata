@@ -70,8 +70,47 @@ def _diff_node(cur, base):
         "d_apparent": _delta(cur, base, "size_apparent"),
         "d_count": _delta(cur, base, "count"),
         "children": [],
+        # per-file diff: name-paired files for this directory (drives the file
+        # slices in the compare sunburst and the file rows in the change table).
+        "own_count": src.get("own_count") or 0,
+        "files_top": _diff_files(cur, base),
     }
     return node
+
+
+def _diff_files(cur, base):
+    """Pair the two directories' files_top lists BY NAME into per-file deltas.
+    Files have no identity across scans, so a rename/re-encode shows as one
+    removed + one added -- acceptable for a directory-aggregating tool."""
+    base_files = {f.get("name"): f for f in (base or {}).get("files_top", [])}
+    cur_names = {f.get("name") for f in (cur or {}).get("files_top", [])}
+    out = []
+    for cf in (cur or {}).get("files_top", []):          # added / changed / same
+        out.append(_file_entry(cf.get("name"), cf, base_files.get(cf.get("name"))))
+    for bf in (base or {}).get("files_top", []):         # base-only -> removed ghosts
+        if bf.get("name") not in cur_names:
+            out.append(_file_entry(bf.get("name"), None, bf))
+    return out
+
+
+def _file_entry(name, cf, bf):
+    """One name-paired file: status + sizes + deltas. cf/bf = cur/base or None."""
+    src = cf if cf is not None else bf
+    if cf is not None and bf is not None:
+        status = _classify((cf.get("size_actual") or 0) - (bf.get("size_actual") or 0))
+    else:
+        status = "added" if cf is not None else "removed"
+    return {
+        "name": name,
+        "size_actual": src.get("size_actual") or 0,
+        "size_apparent": src.get("size_apparent") or 0,
+        "nlink": src.get("nlink"),
+        "status": status,
+        "base_actual": (bf or {}).get("size_actual") or 0,
+        "base_apparent": (bf or {}).get("size_apparent") or 0,
+        "d_actual": ((cf or {}).get("size_actual") or 0) - ((bf or {}).get("size_actual") or 0),
+        "d_apparent": ((cf or {}).get("size_apparent") or 0) - ((bf or {}).get("size_apparent") or 0),
+    }
 
 
 def _build(cur, base):
@@ -135,11 +174,40 @@ def _collect(node, parent_status, changes, counts):
             or node["self_count"] != 0
         ):
             changes.append(_change(node))
+        # Per-file change rows for this matched directory. Emitted even when the
+        # directory itself is "unchanged" (a file added then removed nets flat).
+        # Files inside an added/removed subtree are NOT listed individually --
+        # that whole subtree is a single event (the branch above), so we only
+        # reach here for matched dirs. counts[] stays directory-only.
+        for fe in node.get("files_top", []):
+            if fe["status"] != "unchanged":
+                changes.append(_file_change(node, fe))
+
+
+def _file_change(dir_node, fe):
+    """A flat per-file change record, shaped to coexist with directory rows in
+    the same `changes` list (the `kind` field discriminates)."""
+    return {
+        "kind": "file",
+        "path": dir_node["path"].rstrip("/") + "/" + (fe["name"] or ""),
+        "name": fe["name"],
+        "status": fe["status"],
+        "base_actual": fe["base_actual"],
+        "cur_actual": fe["size_actual"] if fe["status"] != "removed" else 0,
+        "d_actual": fe["d_actual"],
+        "d_apparent": fe["d_apparent"],
+        "d_count": 0,            # a file has no item count
+        "self_actual": fe["d_actual"],   # a file has no children: self == subtree
+        "self_apparent": fe["d_apparent"],
+        "self_count": 0,
+        "nlink": fe.get("nlink"),
+    }
 
 
 def _change(node):
     """The flat per-directory record consumed by the diff table."""
     return {
+        "kind": "dir",
         "path": node["path"],
         "name": node["name"],
         "status": node["status"],

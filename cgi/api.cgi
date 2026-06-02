@@ -295,6 +295,25 @@ def overview_tree(ts):
     return node
 
 
+def compare_tree(ts):
+    """Like overview_tree but with a deeper per-dir file list, for file-level
+    diffing (built + cached separately so the eager dashboard overview stays
+    small). Same directory topology as the overview."""
+    cached = artifact(ts, ".compare.json")
+    try:
+        with open(cached) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        pass
+    node = aggregate.build_compare(load_full_tree(ts))
+    try:  # best-effort cache
+        with open(cached, "w") as f:
+            json.dump(node, f, separators=(",", ":"))
+    except OSError:
+        pass
+    return node
+
+
 def op_tree(ts, path):
     if path:
         sub = find_node(load_full_tree(ts), path)
@@ -305,7 +324,7 @@ def op_tree(ts, path):
 
 
 def op_compare(base_ts, cur_ts):
-    result = diff.compare(overview_tree(base_ts), overview_tree(cur_ts))
+    result = diff.compare(compare_tree(base_ts), compare_tree(cur_ts))
     result["base"] = base_ts
     result["cur"] = cur_ts
     result["base_label"] = fmt.ts_label(base_ts)

@@ -23,7 +23,17 @@ import sys
 # client could never expand past (it re-grafted the same capped set forever).
 OVERVIEW = {"depth_cap": 9, "max_children": 250, "min_size_ratio": 0.0005,
             "files_top_cap": 6}
-LAZY = {"depth_cap": 3, "max_children": 5000, "min_size_ratio": 0.0}
+# Compare uses the SAME directory folding as the overview (so the directory-level
+# diff is identical) but keeps a deeper per-dir file list, so file-level changes
+# are meaningful. Only used by op_compare, never served to the dashboard.
+COMPARE = {"depth_cap": 9, "max_children": 250, "min_size_ratio": 0.0005,
+           "files_top_cap": 100}
+# The lazy (drill-in) file cap is high but bounded: high enough that drilling a
+# file-heavy directory reveals far more files than the overview's 6 (so the
+# "+N files" wedge actually shrinks on drill), bounded so one directory's
+# response can't balloon under a low STRATA_FILE_FLOOR.
+LAZY = {"depth_cap": 3, "max_children": 5000, "min_size_ratio": 0.0,
+        "files_top_cap": 500}
 
 _SUM_FIELDS = (
     "size_actual", "size_apparent",
@@ -127,6 +137,17 @@ def build_overview(detail_root):
 def build_lazy(subtree):
     """Aggregate a drilled-into subtree (shallow + wide) for lazy loading."""
     return _aggregate(subtree, LAZY, 0, _raw_size(subtree) or 1)
+
+
+def build_compare(detail_root):
+    """Like build_overview but with a deeper per-dir file list, for file-level
+    diffing. The directory topology is identical to the overview."""
+    out = _blank(detail_root)
+    for scan_root in detail_root.get("children") or []:
+        out["children"].append(
+            _aggregate(scan_root, COMPARE, 1, _raw_size(scan_root) or 1)
+        )
+    return out
 
 
 def main(argv):
