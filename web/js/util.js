@@ -267,13 +267,19 @@
    * is the font size in whatever units the caller is working in (the result
    * comes back in the same units). Used to fit chart labels precisely. */
   var _measureCtx = null;
-  function textWidth(text, fontPx, weight) {
+  /* Measure text width for fitting/truncation. `mono` selects the monospace
+   * stack (matches CSS --mono) — used for the centre disc label, which renders
+   * mono; measuring it as sans under-counts and lets the name overflow. */
+  function textWidth(text, fontPx, weight, mono) {
     if (!_measureCtx) {
       _measureCtx = document.createElement("canvas").getContext("2d");
     }
-    _measureCtx.font =
-      (weight || 500) + " " + (fontPx || 14) + 'px "Segoe UI", system-ui, ' +
-      "-apple-system, Roboto, Helvetica, Arial, sans-serif";
+    var family = mono
+      ? 'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, ' +
+        '"Liberation Mono", monospace'
+      : '"Segoe UI", system-ui, -apple-system, Roboto, Helvetica, Arial, ' +
+        "sans-serif";
+    _measureCtx.font = (weight || 500) + " " + (fontPx || 14) + "px " + family;
     return _measureCtx.measureText(text == null ? "" : String(text)).width;
   }
 

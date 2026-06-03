@@ -610,18 +610,21 @@
       return (c.y1 - c.y0) * (c.x1 - c.x0) > LABEL_AREA;
     }
 
-    /* Truncate `name` to fit `avail` user units along the spoke, with an
-     * ellipsis; "" when not even one character fits. */
-    function fitLabel(name, avail) {
+    /* Truncate `name` to fit `avail` user units, with an ellipsis; "" when not
+     * even one character fits. `fs`/`mono` default to the ring-label font (sans,
+     * LABEL_FONT); the centre disc label passes its own size and mono=true so the
+     * measurement matches what actually renders (it's monospace). */
+    function fitLabel(name, avail, fs, mono) {
       name = name == null ? "" : String(name);
       if (avail <= 0) return "";
-      var fs = labelFontUnits();
-      if (U.textWidth(name, fs) <= avail) return name;
+      fs = fs || labelFontUnits();
+      var w = mono ? 700 : null;
+      if (U.textWidth(name, fs, w, mono) <= avail) return name;
       var lo = 0,
         hi = name.length;
       while (lo < hi) {
         var mid = (lo + hi + 1) >> 1;
-        if (U.textWidth(name.slice(0, mid) + "…", fs) <= avail) lo = mid;
+        if (U.textWidth(name.slice(0, mid) + "…", fs, w, mono) <= avail) lo = mid;
         else hi = mid - 1;
       }
       return lo >= 1 ? name.slice(0, lo) + "…" : "";
@@ -1135,9 +1138,14 @@
         {
           el: centerLabel,
           px: 14,
+          /* fit with the centre label's actual font (14px, monospace, bold) so
+           * the truncation matches what renders and the name can't spill past
+           * the disc; 1.6·holeR keeps a margin at the off-centre top line. */
           text: fitLabel(
             atRoot ? "(scan)" : f.data.name || f.data.path || "/",
-            holeR * 1.7
+            holeR * 1.6,
+            14 * textK,
+            true
           )
         },
         { el: centerSub, px: 18, text: U.humanBytes(nodeSize(f.data)) }
