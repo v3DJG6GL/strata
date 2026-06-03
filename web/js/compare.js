@@ -1167,7 +1167,11 @@
     var rows = all.filter(function (c) {
       if (!state.filters[c.status]) return false;
       if (state.kinds && state.kinds[c.kind || "dir"] === false) return false;
-      if (state.threshold > 0) {
+      /* The threshold is in the chosen metric's units. Files carry no item
+       * count (self_count is always 0), so a count-metric threshold would drop
+       * every file row even though the "files" kind chip is still on — exempt
+       * file rows in that case so the chip stays the sole control over them. */
+      if (state.threshold > 0 && !(m.isCount && c.kind === "file")) {
         if (Math.abs(num(c[m.selfField])) < state.threshold) return false;
       }
       return true;
