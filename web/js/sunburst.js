@@ -1262,12 +1262,16 @@
               "</div>"
           );
         }
-      } else if (data._files) {
+      } else if (data._files && !(data._remainCount === 0 && data._deletedCount > 0)) {
         /* In dedupe mode the wedge really is just the parent's own files.
          * In exclusive mode it also absorbs bytes shared between sibling
          * subtrees (exclusive at the parent but not at any child); in
          * copies mode it absorbs copy bytes that don't roll up to a
-         * child — so the wording has to match the active hl-mode. */
+         * child — so the wording has to match the active hl-mode. An
+         * all-deleted fold bucket (_remainCount === 0, only deleted ghosts)
+         * holds no live files, so it skips this note and shows only the
+         * "N deleted" note below; the unknown-count case (_remainCount ===
+         * null, live files of unknown tally) still shows it. */
         var note =
           hlMode === "exclusive"
             ? "Files held directly here (bytes exclusive to this directory)"
