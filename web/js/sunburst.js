@@ -689,6 +689,16 @@
         var kids = parent.children;
         if (!kids || !kids.length) return;
 
+        /* A folded parent is already represented by an ancestor's overflow
+         * bucket; hide its whole subtree instead of surfacing a floating
+         * bucket one ring out. BFS (root.each) folded this parent while
+         * visiting its parent, so cascade the fold down to its children —
+         * they'll cascade further as each is visited in turn. */
+        if (parent._folded) {
+          kids.forEach(function (c) { c._folded = true; });
+          return;
+        }
+
         /* Children sort by value (desc), so every too-thin child is part of
          * one contiguous tail — its union of spans has no gaps. */
         var thinDirs = [], thinFiles = [], x0 = Infinity, x1 = -Infinity,
