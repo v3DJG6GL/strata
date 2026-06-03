@@ -788,7 +788,9 @@
         .attr("pointer-events", function (d) {
           return arcVisible(d.target) ? "auto" : "none";
         })
-        .style("opacity", 1)
+        /* element opacity is left at the SVG default of 1 (fade-in/out is driven
+         * by fill-opacity, exit by an opacity transition) — setting it inline
+         * here would override the `.sb-hovering` dim rule and kill hover dimming. */
         .attr("fill-opacity", function (d) {
           return animate ? 0 : arcVisible(d.current) ? arcOpacity(d) : 0;
         });
