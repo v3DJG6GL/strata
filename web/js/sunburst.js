@@ -1191,11 +1191,15 @@
       );
 
       if (data.other) {
+        /* a real truncated "(other)" always drills; a synthetic fold bucket only
+         * expands in some positions — don't tell the user to click otherwise. */
+        var canExpand = !data._foldBucket || canExpandFold(d);
         rows.push(
           '<div class="sb-tip-note">' +
             U.esc(
               (data.other_dirs != null ? data.other_dirs : "Several") +
-                " smaller folders grouped — click to expand"
+                " smaller folders grouped" +
+                (canExpand ? " — click to expand" : "")
             ) +
             "</div>"
         );
@@ -1433,25 +1437,42 @@
      * next foldPass un-folds them. If the bucket still hides server-truncated
      * directories (a real "(other)" got folded in), fetch those first — the
      * subsequent rebuild zooms to the parent and un-folds. */
-    function expandFold(d) {
-      var parent = d.parent;
-      if (!parent) return;
-      var pdata = parent.data || {};
-      if (
+    /* A folded "(other)" still hides a server-truncated "(other)" that must be
+     * fetched before the bucket can un-fold. True only when such a real (other)
+     * is among the folded kids and its subtree isn't already cached. */
+    function foldNeedsFetch(d) {
+      var pdata = (d.parent && d.parent.data) || {};
+      return !!(
         d.data.other &&
         pdata.truncated &&
         opts.fetchSubtree &&
         pdata.path != null &&
-        !subtreeCache[pdata.path]
-      ) {
+        !subtreeCache[pdata.path] &&
+        (d._foldedKids || []).some(function (c) {
+          return c.data && c.data.other && !c.data._foldBucket;
+        })
+      );
+    }
+
+    /* Does clicking this fold bucket do anything? It can fetch a hidden
+     * truncated subtree, or zoom to the parent so the folded dirs get the full
+     * circle. When the parent is already the focus and nothing is truncated
+     * there is nowhere to zoom — the folded items are only browsable in the
+     * details panel, so the tooltip must not promise "click to expand". */
+    function canExpandFold(d) {
+      return !!d.parent && (foldNeedsFetch(d) || d.parent !== focusNode);
+    }
+
+    function expandFold(d) {
+      var parent = d.parent;
+      if (!parent) return;
+      if (foldNeedsFetch(d)) {
         var realOther = null;
         (d._foldedKids || []).forEach(function (c) {
           if (c.data && c.data.other && !c.data._foldBucket) realOther = c;
         });
-        if (realOther) {
-          lazyLoad(realOther);
-          return;
-        }
+        lazyLoad(realOther); // foldNeedsFetch guarantees realOther exists
+        return;
       }
       /* Already focused at the parent (the bucket is a direct focus child that
        * still can't fit all its children) — there is nothing further to zoom;
