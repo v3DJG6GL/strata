@@ -1320,15 +1320,16 @@
         rows.push(tipRow("% of scan", U.pctStr(sz, totalSize)));
         if (data.nlink > 1) rows.push(tipRow("Hard links", String(data.nlink)));
       } else if (data._files) {
-        /* The synthetic wedge stores size_actual === size_apparent ===
-         * remainder computed in the *current* sizeKey/hlMode, so the
-         * dual "On disk / Apparent" rows are always identical AND at
-         * least one label is wrong (e.g. "On disk" in apparent mode,
-         * or "On disk" in copies/exclusive where the value carries
-         * mode-specific accounting). Show one mode-correct row and
-         * skip the always-"—" Child dirs row. */
-        var wedgeV = Number(data.size_actual || 0);
-        rows.push(tipRow(countedLabel(), bytesDual(wedgeV)));
+        /* Two producers land here: the own-files remainder wedge stores
+         * size_actual === size_apparent === remainder (current sizeKey/
+         * hlMode), while a folded file bucket (fillFileBucket) sums
+         * size_actual and size_apparent *separately*, so the two diverge
+         * for sparse/sub-block files. Use nodeSize() — the same value the
+         * arc and the %-rows use — so the single byte row is mode-correct
+         * and reconciles with its own percentages (a hardcoded size_actual
+         * would show the actual sum under an "Apparent" label in apparent
+         * mode). Skip the always-"—" Child dirs row. */
+        rows.push(tipRow(countedLabel(), bytesDual(sz)));
         rows.push(tipRow("% of parent", U.pctStr(sz, parentSz)));
         rows.push(tipRow("% of scan", U.pctStr(sz, totalSize)));
         /* the file count the old wedge never had (Issue 3) */
