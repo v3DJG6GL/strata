@@ -831,7 +831,12 @@
             return arcVisible(d.target) ? "auto" : "none";
           });
       } else {
+        /* A direct .attr() does NOT stop an in-flight transition, so a snap
+         * landing mid-zoom (resize / SCALE toggle while a render(true) tween
+         * is still ticking) must .interrupt() first — otherwise the old tween
+         * keeps overwriting d.current and "d" and the arcs jump back. */
         paths
+          .interrupt()
           .each(function (d) {
             d.current = d.target;
           })
@@ -888,6 +893,7 @@
           });
       } else {
         labelsAll
+          .interrupt()
           .attr("transform", function (d) {
             return labelTransform(d.current);
           })
