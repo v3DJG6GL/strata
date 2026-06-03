@@ -138,8 +138,22 @@
 
     /* ---- D3 svg --------------------------------------------------------- */
     var size = 720; // logical viewBox size
-    // ring band thickness — center disc + ringCount rings span the radius
-    var radius = size / (2 * (ringCount + 1));
+    /* Radial model: a center disc of radius `holeR`, then the focus's rings fill
+     * the remaining radius out to the rim. `band` (ring thickness) is recomputed
+     * per focus by recomputeRadius() so RINGS acts as a MAXIMUM — when the
+     * focused subtree has fewer levels than ringCount, the rings expand to fill
+     * the disc instead of leaving the outer radius empty. When the subtree is at
+     * least ringCount deep, band === holeR === the old uniform band, so deep
+     * trees render exactly as before. */
+    var holeR = size / (2 * (ringCount + 1)); // center-disc (hole) radius
+    var band = holeR; // ring thickness (recomputed per focus)
+    var holeShown = holeR, // radii currently on screen (tween-from for zoom)
+      bandShown = band;
+    /* Outer radius at fractional ring depth `y` (0 = center). Depth 0..1 spans
+     * the hole; depth >= 1 steps out by `band` per ring. Replaces `y * radius`. */
+    function rAt(y) {
+      return y <= 1 ? y * holeR : holeR + (y - 1) * band;
+    }
 
     var svg = d3
       .select(svgHost)
@@ -154,12 +168,21 @@
       .attr("class", "sb-labels")
       .attr("pointer-events", "none")
       .attr("text-anchor", "middle");
+    /* Hidden-depth hint: a faint dashed ring at the rim, shown when the focused
+     * subtree is deeper than the RINGS cap (more levels exist than are drawn).
+     * The outermost drawn ring always reaches size/2, so this aligns with it. */
+    var rimHint = svg
+      .append("circle")
+      .attr("class", "sb-rim-hint")
+      .attr("r", size / 2 - 0.5)
+      .attr("fill", "none")
+      .style("display", "none");
 
     /* center disc — zoom-out target */
     var centerG = svg.append("g").attr("class", "sb-center");
     var centerCircle = centerG
       .append("circle")
-      .attr("r", radius)
+      .attr("r", holeR)
       .attr("class", "sb-center-circle");
     /* lazy-load indicator — a quiet arc that spins inside the center disc.
      * pathLength normalizes the dash math so it stays a single ~90° arc at any
@@ -168,7 +191,7 @@
       .append("circle")
       .attr("class", "sb-loader-ring")
       .attr("pathLength", 100)
-      .attr("r", radius * 0.9) // initial size; applyRings keeps it in sync
+      .attr("r", holeR * 0.9) // initial size; recomputeRadius keeps it in sync
       .style("display", "none");
     /* center text — updateCenter() sizes and positions these explicitly */
     var centerLabel = centerG
@@ -197,13 +220,13 @@
         return Math.min((d.x1 - d.x0) / 2, 0.004);
       })
       .padRadius(function () {
-        return radius * 1.5;
+        return band * 1.5;
       })
       .innerRadius(function (d) {
-        return d.y0 * radius;
+        return Math.max(0, rAt(d.y0));
       })
       .outerRadius(function (d) {
-        return Math.max(d.y0 * radius, d.y1 * radius - 1);
+        return Math.max(rAt(d.y0), rAt(d.y1) - 1);
       });
 
     /* ---- constant-size text -------------------------------------------- */
@@ -476,6 +499,15 @@
           return d.children && d.children.length ? 0 : d._leafValue || 0;
         })
         .sort(function (a, b) {
+          /* Keep the synthetic own-files remainder wedge (·files·) last so it
+           * sits adjacent to the thin-file tail. foldPass always merges the
+           * wedge into the single "+N files" bucket, and the combined angular
+           * span must stay contiguous — a wedge stranded mid-order would make
+           * the bucket arc overlap an intervening non-folded subfolder.
+           * (Sort runs before the flatten below, so data is at a.data.data.) */
+          var aw = a.data && a.data.data && a.data.data._files;
+          var bw = b.data && b.data.data && b.data.data._files;
+          if (aw !== bw) return aw ? 1 : -1;
           return b.value - a.value;
         });
 
@@ -526,6 +558,36 @@
       return d.y0 >= 1 && d.y1 <= ringCount + 1 && d.x1 > d.x0;
     }
 
+    /* Max loaded ring-depth below focus `p` (0 = p is a leaf). Promoted file
+     * leaves and the ·files· wedge are real depth+1 children, so they count as a
+     * ring; fold buckets reuse an existing child ring and don't extend depth. */
+    function depthBelow(p) {
+      var maxRel = 0;
+      p.each(function (d) {
+        var rel = d.depth - p.depth;
+        if (rel > maxRel) maxRel = rel;
+      });
+      return maxRel;
+    }
+
+    /* Size the radial band so RINGS is a MAXIMUM: when the focus is shallower
+     * than ringCount, the rings fill the disc instead of leaving the rim empty.
+     * holeR stays fixed (so the centre text budget is stable); band grows to
+     * cover the remaining radius over the actual depth. A childless focus
+     * enlarges the hole so it reads as a terminal disc, not a thin empty ring.
+     * Recomputed on every focus/build/RINGS change; render() animates the
+     * holeR/band change across a zoom. DOM updates are left to render(). */
+    function recomputeRadius(p) {
+      holeR = size / (2 * (ringCount + 1));
+      var avail = depthBelow(p || focusNode || root);
+      if (avail <= 0) {
+        holeR = size * 0.3; // leaf focus: dominant centre disc, no ring band
+        band = size / 2 - holeR;
+        return;
+      }
+      band = (size / 2 - holeR) / Math.min(ringCount, avail);
+    }
+
     /* Label font size in SVG user units (counter-scaled to a constant px). */
     function labelFontUnits() {
       return LABEL_FONT * textK;
@@ -535,14 +597,14 @@
      * Labels run radially, so the budget is the band thickness — NOT the
      * tangential arc length (measuring that was the truncation bug). */
     function bandLength(c) {
-      return (c.y1 - c.y0) * radius - LABEL_PAD;
+      return rAt(c.y1) - rAt(c.y0) - LABEL_PAD;
     }
 
     /* May this slice host a label? It must be in a visible ring, angularly
      * thick enough for the glyph height, and not a clutter-tiny sliver. */
     function labelFits(c) {
       if (!arcVisible(c)) return false;
-      var midR = ((c.y0 + c.y1) / 2) * radius;
+      var midR = rAt((c.y0 + c.y1) / 2);
       if ((c.x1 - c.x0) * midR < labelFontUnits() * 1.15) return false;
       return (c.y1 - c.y0) * (c.x1 - c.x0) > LABEL_AREA;
     }
@@ -575,7 +637,10 @@
       if (data.other) {
         if (!(data.other_dirs > 0) && data._deletedCount > 0)
           return data._deletedCount + " deleted";
-        return "+" + (data.other_dirs || 0) + " folders";
+        /* unknown grouped-dir count (matches the tooltip's "Several") — never a
+         * misleading "+0 folders" on a bucket that does hold folders. */
+        if (data.other_dirs == null) return "folders";
+        return "+" + data.other_dirs + " folders";
       }
       if (data._files) {
         if (data._remainCount > 0) return "+" + data._remainCount + " files";
@@ -598,7 +663,7 @@
 
     function labelTransform(d) {
       var x = (((d.x0 + d.x1) / 2) * 180) / Math.PI;
-      var y = ((d.y0 + d.y1) / 2) * radius;
+      var y = rAt((d.y0 + d.y1) / 2);
       return (
         "rotate(" +
         (x - 90) +
@@ -621,7 +686,7 @@
     var MIN_ARC_PX = 2;
 
     function isTooThin(c) {
-      var midR = ((c.y0 + c.y1) / 2) * radius;
+      var midR = rAt((c.y0 + c.y1) / 2);
       return (c.x1 - c.x0) * midR < MIN_ARC_PX * textK;
     }
     function isFileLike(data) {
@@ -750,7 +815,13 @@
         var thinDirs = [], thinFiles = [], x0 = Infinity, x1 = -Infinity,
           y0 = 0, y1 = 0, dirW = 0, fileW = 0;
         kids.forEach(function (c) {
-          if (!arcVisible(c.target) || !isTooThin(c.target)) return;
+          if (!arcVisible(c.target)) return;
+          /* The own-files remainder wedge always folds into the file bucket so a
+           * directory shows ONE "+N files" slice (un-promoted remainder + thin
+           * promoted leaves merged); other children fold only when too thin to
+           * draw, so genuinely-large files still surface as their own slices. */
+          var wedge = c.data && c.data._files;
+          if (!wedge && !isTooThin(c.target)) return;
           c._folded = true;
           if (c.target.x0 < x0) x0 = c.target.x0;
           if (c.target.x1 > x1) x1 = c.target.x1;
@@ -802,6 +873,21 @@
       measureTextK(); // keep label font constant px for the current display
       var nodes = renderNodes();
       var dur = animate ? TWEEN_MS : 0;
+
+      /* Ring thickness can change between focuses (RINGS is a max, so a shallower
+       * focus gets fatter rings). recomputeRadius() already set holeR/band to the
+       * destination; on an animated render start the arcs at the on-screen values
+       * (holeShown/bandShown) and tween to the destination below, so bands grow/
+       * shrink smoothly with the angular morph instead of popping. */
+      var holeTo = holeR,
+        bandTo = band;
+      var bandMoves =
+        animate && (holeShown !== holeTo || bandShown !== bandTo);
+      gArcs.interrupt("ringband");
+      if (bandMoves) {
+        holeR = holeShown;
+        band = bandShown;
+      }
 
       /* ARCS */
       var paths = gArcs.selectAll("path.sb-arc").data(nodes, nodeKey);
@@ -964,6 +1050,48 @@
           });
       }
 
+      /* hidden-depth hint at the rim: more levels exist below the focus than the
+       * RINGS cap draws, so the outermost ring isn't the bottom of the tree. */
+      rimHint.style(
+        "display",
+        focusNode && depthBelow(focusNode) > ringCount ? null : "none"
+      );
+
+      if (bandMoves) {
+        var hi = d3.interpolate(holeShown, holeTo);
+        var bi = d3.interpolate(bandShown, bandTo);
+        gArcs
+          .transition("ringband")
+          .duration(dur)
+          .tween("rb", function () {
+            return function (t) {
+              holeR = hi(t);
+              band = bi(t);
+              /* update arcs re-eval arc(d.current) via their own tween; entering
+               * arcs (no "d" tween) + labels + centre disc need this nudge. */
+              pathsAll.attr("d", function (d) {
+                return arc(d.current);
+              });
+              labelsAll.attr("transform", function (d) {
+                return labelTransform(d.current);
+              });
+              centerCircle.attr("r", holeR);
+              loaderRing.attr("r", holeR * 0.9);
+            };
+          })
+          .on("end.rb interrupt.rb", function () {
+            holeR = holeTo;
+            band = bandTo;
+            centerCircle.attr("r", holeR);
+            loaderRing.attr("r", holeR * 0.9);
+          });
+      } else {
+        centerCircle.attr("r", holeR);
+        loaderRing.attr("r", holeR * 0.9);
+      }
+      holeShown = holeTo;
+      bandShown = bandTo;
+
       updateCenter();
       renderCrumbs();
       renderDetails();
@@ -1008,7 +1136,7 @@
           px: 14,
           text: fitLabel(
             atRoot ? "(scan)" : f.data.name || f.data.path || "/",
-            radius * 1.7
+            holeR * 1.7
           )
         },
         { el: centerSub, px: 18, text: U.humanBytes(nodeSize(f.data)) }
@@ -1032,7 +1160,7 @@
         return h;
       }
       var keep = cand.length;
-      while (keep > 1 && blockHeight(keep) > radius * 1.55) keep--;
+      while (keep > 1 && blockHeight(keep) > holeR * 1.55) keep--;
 
       [centerLabel, centerSub, centerHint].forEach(function (el) {
         el.style("display", "none");
@@ -1701,6 +1829,7 @@
       if (!p) return;
       focusNode = p;
       project(p);
+      recomputeRadius(p); // fill rings to depth-below-p (before foldPass uses band)
       foldPass(p);
       clearHover();
       render(true);
@@ -1780,6 +1909,7 @@
       totalSize = nodeSize(rawRoot) || 1;
       focusNode = (focusPath != null && findHierByPath(focusPath)) || root;
       project(focusNode);
+      recomputeRadius(focusNode); // fill rings to actual depth (before foldPass)
       foldPass(focusNode);
       root.each(function (d) {
         d.current = d.target;
@@ -1801,12 +1931,17 @@
       }
     }
 
-    /* Recompute geometry for a new ring count. */
+    /* Recompute geometry for a new ring count. The following relayout() rebuilds
+     * and re-renders (a snap), so the band fills to the focus's actual depth. */
     function applyRings(n) {
       ringCount = Math.max(2, Math.min(5, n));
-      radius = size / (2 * (ringCount + 1));
-      centerCircle.attr("r", radius);
-      loaderRing.attr("r", radius * 0.9); // hugs the inside of the center disc
+      if (focusNode || root) recomputeRadius(focusNode || root);
+      else {
+        holeR = size / (2 * (ringCount + 1));
+        band = holeR;
+      }
+      centerCircle.attr("r", holeR);
+      loaderRing.attr("r", holeR * 0.9); // hugs the inside of the center disc
     }
 
     function onToolbarClick(e) {

@@ -1093,6 +1093,18 @@ button {
   stroke-width: 1.4;
 }
 
+/* hidden-depth hint: a faint dashed ring at the rim, shown when the focused
+ * subtree has more levels than the RINGS cap draws — a quiet cue that the
+ * outermost ring isn't the bottom of the tree. Display toggled from JS. */
+.sb-rim-hint {
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-opacity: 0.35;
+  stroke-dasharray: 3 5;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+}
+
 /* arc labels — light text with a dark halo so they read on any arc colour.
  * font-size is in SVG user units and must match LABEL_FONT in sunburst.js. */
 .sb-label {
