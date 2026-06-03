@@ -1752,6 +1752,8 @@
         if (tip && tip.parentNode) tip.parentNode.removeChild(tip);
         resizeObs.disconnect();
         cancelAnimationFrame(roRaf);
+        cancelAnimationFrame(moveRaf);
+        clearTimeout(spinnerTimer);
         toolbar.removeEventListener("click", onToolbarClick);
         if (svg) {
           /* Cancel any in-flight zoom tween so it doesn't keep ticking
