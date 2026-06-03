@@ -570,9 +570,17 @@
      * its filename). fitLabel truncates to "+N…" on a narrow arc. */
     function displayName(data) {
       if (!data) return "";
-      if (data.other) return "+" + (data.other_dirs || 0) + " folders";
+      /* A compare-mode bucket made up only of deleted ghosts (no current items)
+       * labels itself "N deleted" instead of a misleading "+0 folders"/"files". */
+      if (data.other) {
+        if (!(data.other_dirs > 0) && data._deletedCount > 0)
+          return data._deletedCount + " deleted";
+        return "+" + (data.other_dirs || 0) + " folders";
+      }
       if (data._files) {
-        return data._remainCount > 0 ? "+" + data._remainCount + " files" : "files";
+        if (data._remainCount > 0) return "+" + data._remainCount + " files";
+        if (data._deletedCount > 0) return data._deletedCount + " deleted";
+        return "files";
       }
       return data.name || "";
     }
@@ -636,7 +644,7 @@
     }
 
     function fillDirBucket(b, parent, dirs) {
-      var sa = 0, sk = 0, cnt = 0, dn = 0, truncated = false;
+      var sa = 0, sk = 0, cnt = 0, dn = 0, deleted = 0, truncated = false;
       dirs.forEach(function (c) {
         var d = c.data || {};
         sa += Number(d.size_apparent || 0);
@@ -644,15 +652,16 @@
         /* A compare-mode "removed" dir is a ghost laid out at its OLD size; it is
          * not part of THIS snapshot, so it keeps its bytes (the folded region
          * still spans it visually) but is excluded from the "+N folders"/item
-         * tally — otherwise the bucket claims folders that no longer exist. */
-        if (d.status === "removed") return;
+         * tally — otherwise the bucket claims folders that no longer exist. It is
+         * counted separately so an all-deleted bucket can label itself "N deleted". */
+        if (d.status === "removed") { deleted += 1; return; }
         cnt += Number(d.count || 0);
         dn += d.other ? Number(d.other_dirs || 0) : 1;
         truncated = truncated || !!d.truncated;
       });
       b.data = {
         name: "(other)", other: true, _foldBucket: true,
-        path: parent.data.path, other_dirs: dn,
+        path: parent.data.path, other_dirs: dn, _deletedCount: deleted,
         size_actual: sk, size_apparent: sa, count: cnt,
         truncated: truncated || !!(parent.data && parent.data.truncated),
         children: []
@@ -662,7 +671,7 @@
     }
 
     function fillFileBucket(b, parent, files) {
-      var sa = 0, sk = 0, remain = 0, unknown = false;
+      var sa = 0, sk = 0, remain = 0, deleted = 0, unknown = false;
       files.forEach(function (c) {
         var d = c.data || {};
         sa += Number(d.size_apparent || 0);
@@ -672,16 +681,18 @@
            * the snapshot predates own_count, so the tally is unknown. */
           if (d._remainCount == null) unknown = true;
           else remain += Number(d._remainCount);
-        } else if (d.status !== "removed") {
-          /* a single current file leaf; a compare-mode "removed" ghost keeps its
-           * bytes above but is excluded from the count — it is not a file that
-           * still exists, matching how the remainder wedge omits removed files. */
-          remain += 1;
+        } else if (d.status === "removed") {
+          /* a compare-mode "removed" ghost keeps its bytes above but is excluded
+           * from the current-file count (it no longer exists); counted separately
+           * so an all-deleted bucket can label itself "N deleted". */
+          deleted += 1;
+        } else {
+          remain += 1; // a single current file leaf
         }
       });
       b.data = {
         name: "·files·", _files: true, _foldBucket: true,
-        path: parent.data.path,
+        path: parent.data.path, _deletedCount: deleted,
         size_actual: sk, size_apparent: sa, count: null,
         /* null when any folded wedge has an unknown count, so the bucket shows
          * "files" (no number) instead of a precise undercount — matching how a
@@ -1220,17 +1231,21 @@
 
       if (data.other) {
         /* a real truncated "(other)" always drills; a synthetic fold bucket only
-         * expands in some positions — don't tell the user to click otherwise. */
+         * expands in some positions — don't tell the user to click otherwise.
+         * Skip the "smaller folders grouped" line when the bucket holds only
+         * deleted ghosts (other_dirs === 0) — the deleted note below covers it. */
         var canExpand = !data._foldBucket || canExpandFold(d);
-        rows.push(
-          '<div class="sb-tip-note">' +
-            U.esc(
-              (data.other_dirs != null ? data.other_dirs : "Several") +
-                " smaller folders grouped" +
-                (canExpand ? " — click to expand" : "")
-            ) +
-            "</div>"
-        );
+        if (data.other_dirs == null || data.other_dirs > 0) {
+          rows.push(
+            '<div class="sb-tip-note">' +
+              U.esc(
+                (data.other_dirs != null ? data.other_dirs : "Several") +
+                  " smaller folders grouped" +
+                  (canExpand ? " — click to expand" : "")
+              ) +
+              "</div>"
+          );
+        }
       } else if (data._file) {
         /* a single promoted file */
         if (data.nlink > 1) {
@@ -1255,6 +1270,19 @@
               ? "Files held directly here, plus hard-link copies unique to this directory"
               : "Files held directly in this directory";
         rows.push('<div class="sb-tip-note">' + U.esc(note) + "</div>");
+      }
+
+      /* compare-mode fold bucket: call out how many of the grouped slices are
+       * deleted ghosts (shown at their former size but not in the live count). */
+      if (data._foldBucket && data._deletedCount > 0) {
+        rows.push(
+          '<div class="sb-tip-note">' +
+            U.esc(
+              data._deletedCount +
+                " deleted since the baseline — shown at their former size"
+            ) +
+            "</div>"
+        );
       }
 
       if (opts.tooltipRows) {
