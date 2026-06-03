@@ -657,18 +657,28 @@
     }
 
     function fillFileBucket(b, parent, files) {
-      var sa = 0, sk = 0, remain = 0;
+      var sa = 0, sk = 0, remain = 0, unknown = false;
       files.forEach(function (c) {
         var d = c.data || {};
         sa += Number(d.size_apparent || 0);
         sk += Number(d.size_actual || 0);
-        remain += d._files ? Number(d._remainCount || 0) : 1; // wedge count vs one file
+        if (d._files) {
+          /* a folded own-files wedge contributes its own file count; null means
+           * the snapshot predates own_count, so the tally is unknown. */
+          if (d._remainCount == null) unknown = true;
+          else remain += Number(d._remainCount);
+        } else {
+          remain += 1; // a single file leaf
+        }
       });
       b.data = {
         name: "·files·", _files: true, _foldBucket: true,
         path: parent.data.path,
         size_actual: sk, size_apparent: sa, count: null,
-        _remainCount: remain, children: []
+        /* null when any folded wedge has an unknown count, so the bucket shows
+         * "files" (no number) instead of a precise undercount — matching how a
+         * standalone null-count wedge already renders (displayName / tooltip). */
+        _remainCount: unknown ? null : remain, children: []
       };
       b._color = "#363b44";
       b._foldedKids = files;
