@@ -641,6 +641,11 @@
         var d = c.data || {};
         sa += Number(d.size_apparent || 0);
         sk += Number(d.size_actual || 0);
+        /* A compare-mode "removed" dir is a ghost laid out at its OLD size; it is
+         * not part of THIS snapshot, so it keeps its bytes (the folded region
+         * still spans it visually) but is excluded from the "+N folders"/item
+         * tally — otherwise the bucket claims folders that no longer exist. */
+        if (d.status === "removed") return;
         cnt += Number(d.count || 0);
         dn += d.other ? Number(d.other_dirs || 0) : 1;
         truncated = truncated || !!d.truncated;
@@ -667,8 +672,11 @@
            * the snapshot predates own_count, so the tally is unknown. */
           if (d._remainCount == null) unknown = true;
           else remain += Number(d._remainCount);
-        } else {
-          remain += 1; // a single file leaf
+        } else if (d.status !== "removed") {
+          /* a single current file leaf; a compare-mode "removed" ghost keeps its
+           * bytes above but is excluded from the count — it is not a file that
+           * still exists, matching how the remainder wedge omits removed files. */
+          remain += 1;
         }
       });
       b.data = {
