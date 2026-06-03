@@ -82,6 +82,16 @@ def _diff_files(cur, base):
     """Pair the two directories' files_top lists BY NAME into per-file deltas.
     Files have no identity across scans, so a rename/re-encode shows as one
     removed + one added -- acceptable for a directory-aggregating tool."""
+    # A snapshot taken before per-file tracking carries no own_count/files_top.
+    # own_count rides through _blank even when 0 (key-presence), so its ABSENCE
+    # on an existing side is the reliable "this snapshot has no file data" signal
+    # (an empty files_top, by contrast, legitimately means "tracked, no loose
+    # files"). Diffing files against such a side would mark every counterpart
+    # file spuriously added/removed, so skip the per-file diff for that pair.
+    if (cur is not None and "own_count" not in cur) or (
+        base is not None and "own_count" not in base
+    ):
+        return []
     base_files = {f.get("name"): f for f in (base or {}).get("files_top", [])}
     cur_names = {f.get("name") for f in (cur or {}).get("files_top", [])}
     out = []
