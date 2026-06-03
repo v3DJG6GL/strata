@@ -1035,7 +1035,7 @@
         chip.type = "button";
         chip.setAttribute("aria-pressed", state.kinds[kv[0]] ? "true" : "false");
         if (!state.kinds[kv[0]]) chip.classList.add("off");
-        chip.innerHTML = '<span class="cmp-fchip-dot"></span>' + U.esc(kv[1]);
+        chip.innerHTML = U.esc(kv[1]); // no status dot — these are kind toggles, not status
         chip.addEventListener("click", function () {
           state.kinds[kv[0]] = !state.kinds[kv[0]];
           chip.classList.toggle("off", !state.kinds[kv[0]]);
