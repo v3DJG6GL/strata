@@ -579,7 +579,12 @@
       }
       if (data._files) {
         if (data._remainCount > 0) return "+" + data._remainCount + " files";
-        if (data._deletedCount > 0) return data._deletedCount + " deleted";
+        /* Only a bucket with NO live files (remain === 0, not the unknown null
+         * sentinel) is purely deleted. A bucket folding a legacy own-files wedge
+         * (_remainCount === null) still holds current files of unknown count, so
+         * it must fall through to "files" rather than claim "N deleted". */
+        if (data._remainCount === 0 && data._deletedCount > 0)
+          return data._deletedCount + " deleted";
         return "files";
       }
       return data.name || "";
