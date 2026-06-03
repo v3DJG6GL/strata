@@ -649,11 +649,21 @@
     }
 
     function fillDirBucket(b, parent, dirs) {
-      var sa = 0, sk = 0, cnt = 0, dn = 0, deleted = 0, truncated = false;
+      var sa = 0, sk = 0, ea = 0, ek = 0, ca = 0, ck = 0,
+        cnt = 0, dn = 0, deleted = 0, truncated = false;
       dirs.forEach(function (c) {
         var d = c.data || {};
         sa += Number(d.size_apparent || 0);
         sk += Number(d.size_actual || 0);
+        /* Carry the exclusive/copy bytes too: each folded dir's ARC WIDTH comes
+         * from nodeSize(), which honours hlMode (exclusive/copies). Without these
+         * the bucket has no ex/cp fields, so nodeSize(bucket) falls back to dedupe
+         * bytes and the tooltip's "Counted" row + "% of parent"/"% of scan" no
+         * longer reconcile with the visibly ex/cp-weighted wedge. */
+        ea += Number(d.exclusive_apparent || 0);
+        ek += Number(d.exclusive_actual || 0);
+        ca += Number(d.copy_apparent || 0);
+        ck += Number(d.copy_actual || 0);
         /* A compare-mode "removed" dir is a ghost laid out at its OLD size; it is
          * not part of THIS snapshot, so it keeps its bytes (the folded region
          * still spans it visually) but is excluded from the "+N folders"/item
@@ -667,7 +677,9 @@
       b.data = {
         name: "(other)", other: true, _foldBucket: true,
         path: parent.data.path, other_dirs: dn, _deletedCount: deleted,
-        size_actual: sk, size_apparent: sa, count: cnt,
+        size_actual: sk, size_apparent: sa,
+        exclusive_actual: ek, exclusive_apparent: ea,
+        copy_actual: ck, copy_apparent: ca, count: cnt,
         truncated: truncated || !!(parent.data && parent.data.truncated),
         children: []
       };
