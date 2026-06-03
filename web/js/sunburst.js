@@ -138,15 +138,16 @@
 
     /* ---- D3 svg --------------------------------------------------------- */
     var size = 720; // logical viewBox size
-    /* Radial model: a center disc of radius `holeR`, then the focus's rings fill
-     * the remaining radius out to the rim. `band` (ring thickness) is recomputed
-     * per focus by recomputeRadius() so RINGS acts as a MAXIMUM — when the
-     * focused subtree has fewer levels than ringCount, the rings expand to fill
-     * the disc instead of leaving the outer radius empty. When the subtree is at
-     * least ringCount deep, band === holeR === the old uniform band, so deep
-     * trees render exactly as before. */
-    var holeR = size / (2 * (ringCount + 1)); // center-disc (hole) radius
-    var band = holeR; // ring thickness (recomputed per focus)
+    /* Radial model: a center disc of FIXED radius `HOLE_R`, then the focus's
+     * rings fill the remaining radius out to the rim. `band` (ring thickness) is
+     * recomputed per focus by recomputeRadius() so RINGS acts as a MAXIMUM — when
+     * the focused subtree has fewer levels than ringCount the rings expand to
+     * fill the disc instead of leaving the rim empty. The hole does NOT depend on
+     * ringCount, so changing RINGS on a shallow focus (e.g. a flat folder) leaves
+     * the view unchanged, and the centre label keeps a constant fit budget. */
+    var HOLE_R = size / 6; // fixed centre-disc radius (independent of RINGS)
+    var holeR = HOLE_R; // current hole radius (HOLE_R, or enlarged for a leaf)
+    var band = HOLE_R; // ring thickness (recomputed per focus)
     var holeShown = holeR, // radii currently on screen (tween-from for zoom)
       bandShown = band;
     /* Outer radius at fractional ring depth `y` (0 = center). Depth 0..1 spans
@@ -578,7 +579,7 @@
      * Recomputed on every focus/build/RINGS change; render() animates the
      * holeR/band change across a zoom. DOM updates are left to render(). */
     function recomputeRadius(p) {
-      holeR = size / (2 * (ringCount + 1));
+      holeR = HOLE_R;
       var avail = depthBelow(p || focusNode || root);
       if (avail <= 0) {
         holeR = size * 0.3; // leaf focus: dominant centre disc, no ring band
@@ -1937,8 +1938,8 @@
       ringCount = Math.max(2, Math.min(5, n));
       if (focusNode || root) recomputeRadius(focusNode || root);
       else {
-        holeR = size / (2 * (ringCount + 1));
-        band = holeR;
+        holeR = HOLE_R;
+        band = HOLE_R;
       }
       centerCircle.attr("r", holeR);
       loaderRing.attr("r", holeR * 0.9); // hugs the inside of the center disc
