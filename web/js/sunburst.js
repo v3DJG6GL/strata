@@ -187,7 +187,7 @@
       .attr("class", "sb-center-circle");
     /* lazy-load indicator — a quiet arc that spins inside the center disc.
      * pathLength normalizes the dash math so it stays a single ~90° arc at any
-     * radius (vs. a tiled dash pattern). Sized in applyRings, hidden by default. */
+     * radius (vs. a tiled dash pattern). Sized by syncHoleDisc, hidden by default. */
     var loaderRing = centerG
       .append("circle")
       .attr("class", "sb-loader-ring")
