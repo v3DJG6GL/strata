@@ -85,33 +85,6 @@ def load_full_tree_or_none(ts):
         return None
 
 
-def find_node(node, path):
-    """Locate the node at absolute `path` within a tree, or None.
-
-    (other) buckets inherit their parent's path (see aggregate.py); skip them
-    explicitly so the lookup is invariant under children-iteration order.
-    Iterative so a deeply-nested filesystem won't blow the recursion limit.
-    Trailing slashes are normalised on both sides so a "/foo" query still
-    matches a "/foo/" node (and vice-versa): the prefix descent already rstrips,
-    so the equality tests must too or a trailing-slash node is missed."""
-    path = (path or "").rstrip("/")
-    cur = node
-    while True:
-        if not cur.get("other") and (cur.get("path") or "").rstrip("/") == path:
-            return cur
-        nxt = None
-        for c in cur.get("children", []):
-            if c.get("other"):
-                continue
-            cp = (c.get("path") or "").rstrip("/")
-            if cp == path or path.startswith(cp + "/"):
-                nxt = c
-                break
-        if nxt is None:
-            return None
-        cur = nxt
-
-
 def get_stats(ts):
     """Per-scan stats; rebuilt from the indexer totals if the sidecar is gone."""
     sidecar = artifact(ts, ".stats.json")
@@ -334,7 +307,7 @@ def compare_tree(ts):
 def op_tree(ts, path):
     if path:
         full = load_full_tree_or_none(ts)
-        sub = find_node(full, path) if full is not None else None
+        sub = diff.find_node(full, path) if full is not None else None
         if sub is None:
             return {"ts": ts, "lazy": True, "error": "path not found in snapshot"}
         return {"ts": ts, "lazy": True, "node": aggregate.build_lazy(sub)}
@@ -351,8 +324,8 @@ def op_compare(base_ts, cur_ts, path=""):
     if path:
         base_full = load_full_tree_or_none(base_ts)
         cur_full = load_full_tree_or_none(cur_ts)
-        base_sub = find_node(base_full, path) if base_full is not None else None
-        cur_sub = find_node(cur_full, path) if cur_full is not None else None
+        base_sub = diff.find_node(base_full, path) if base_full is not None else None
+        cur_sub = diff.find_node(cur_full, path) if cur_full is not None else None
         if base_sub is None and cur_sub is None:
             return {"base": base_ts, "cur": cur_ts, "lazy": True,
                     "error": "path not found in snapshot"}

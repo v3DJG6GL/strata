@@ -240,12 +240,20 @@ def _totals(root):
     }
 
 
-def _find_node(root, path):
-    """Locate the real node at absolute `path` in a full (unfolded) tree, or
-    None. Mirrors api.cgi.find_node: skips "(other)" buckets and descends by path
-    prefix, iterative so a deep filesystem can't blow the recursion limit.
-    Trailing slashes are normalised on both sides (the prefix descent already
-    rstrips, so the equality tests must too)."""
+def find_node(root, path):
+    """Locate the node at absolute `path` within a detail tree, or None.
+
+    "(other)" buckets inherit their parent's path (see aggregate.py); skip them
+    explicitly so the lookup is invariant under children-iteration order.
+    Iterative so a deeply-nested filesystem won't blow the recursion limit.
+    Trailing slashes are normalised on both sides so a "/foo" query still matches
+    a "/foo/" node (and vice-versa): the prefix descent already rstrips, so the
+    equality tests must too or a trailing-slash node is missed.
+
+    The single path-lookup for the codebase: the web layer (api.cgi) calls it for
+    both the dashboard drill (op=tree) and the compare drill (op=compare), and
+    _reconcile_boundary uses it to look a folded fold-boundary directory up in the
+    full tree."""
     path = (path or "").rstrip("/")
     cur = root
     while True:
@@ -340,11 +348,11 @@ def _reconcile_boundary(tree, base_full, cur_full):
             return
         st = node.get("status")
         if st == "added" and base_full is not None:
-            bc = _find_node(base_full, node["path"])
+            bc = find_node(base_full, node["path"])
             if bc is not None:
                 _restate_added(node, bc)
         elif st == "removed" and cur_full is not None:
-            cc = _find_node(cur_full, node["path"])
+            cc = find_node(cur_full, node["path"])
             if cc is not None:
                 _restate_removed(node, cc)
     walk(tree)
