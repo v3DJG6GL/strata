@@ -74,6 +74,17 @@ def load_full_tree(ts):
         return json.load(f)
 
 
+def load_full_tree_or_none(ts):
+    """load_full_tree, but None instead of raising when the snapshot's detail
+    artifact is absent or unreadable. Lets a drill into a pruned/half-removed
+    snapshot return a clean "path not found" envelope rather than the generic
+    "internal error" the blanket handler would otherwise surface."""
+    try:
+        return load_full_tree(ts)
+    except (OSError, ValueError):
+        return None
+
+
 def find_node(node, path):
     """Locate the node at absolute `path` within a tree, or None.
 
@@ -318,7 +329,8 @@ def compare_tree(ts):
 
 def op_tree(ts, path):
     if path:
-        sub = find_node(load_full_tree(ts), path)
+        full = load_full_tree_or_none(ts)
+        sub = find_node(full, path) if full is not None else None
         if sub is None:
             return {"ts": ts, "lazy": True, "error": "path not found in snapshot"}
         return {"ts": ts, "lazy": True, "node": aggregate.build_lazy(sub)}
@@ -333,8 +345,10 @@ def op_compare(base_ts, cur_ts, path=""):
     # zooms to an empty disc). build_lazy keeps the full child set (no size floor)
     # on each side, then compare_subtree pairs them into a delta subtree.
     if path:
-        base_sub = find_node(load_full_tree(base_ts), path)
-        cur_sub = find_node(load_full_tree(cur_ts), path)
+        base_full = load_full_tree_or_none(base_ts)
+        cur_full = load_full_tree_or_none(cur_ts)
+        base_sub = find_node(base_full, path) if base_full is not None else None
+        cur_sub = find_node(cur_full, path) if cur_full is not None else None
         if base_sub is None and cur_sub is None:
             return {"base": base_ts, "cur": cur_ts, "lazy": True,
                     "error": "path not found in snapshot"}
@@ -349,16 +363,10 @@ def op_compare(base_ts, cur_ts, path=""):
     # added/removed even though the drill-in shows it partly pre-existed. A missing
     # full tree just degrades to the un-reconciled (old) classification rather than
     # failing the whole comparison, so reconciliation is best-effort.
-    def _safe_full(ts):
-        try:
-            return load_full_tree(ts)
-        except (OSError, ValueError):
-            return None
-
     result = diff.compare(
         compare_tree(base_ts), compare_tree(cur_ts),
-        base_full_loader=lambda: _safe_full(base_ts),
-        cur_full_loader=lambda: _safe_full(cur_ts),
+        base_full_loader=lambda: load_full_tree_or_none(base_ts),
+        cur_full_loader=lambda: load_full_tree_or_none(cur_ts),
     )
     result["base"] = base_ts
     result["cur"] = cur_ts
