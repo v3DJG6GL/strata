@@ -254,6 +254,12 @@
      * re-render (snap — the geometry itself didn't move). foldPass() re-measures
      * textK itself, so the threshold is always current. */
     function refitOnResize() {
+      /* Restore the focus's true band first: a resize/SCALE toggle can fire mid
+       * zoom (its tween leaves holeR/band at a partial frame), and this snap path
+       * reads them for both the fold threshold and the render — without this the
+       * chart would freeze at a mid-animation ring thickness until the next focus
+       * change. Idempotent off a tween (depends only on focusNode + ringCount). */
+      recomputeRadius(focusNode); // before foldPass uses band (mirrors zoomTo)
       foldPass(focusNode);
       render(false);
     }
