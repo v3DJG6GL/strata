@@ -732,6 +732,22 @@
       },
       tooltipRows: function (dataNode) {
         return tooltipRows(state, dataNode);
+      },
+      /* Lazy drill-in, same contract as the dashboard's fetchSubtree: the
+       * compare tree folds small dirs into "(other)" just like the overview, so
+       * without this a truncated dir's children can never be expanded (clicking
+       * "(other)" zooms to an empty disc). op=compare&path diffs the deeper
+       * build_lazy subtree on each side and returns one delta node to graft. */
+      fetchSubtree: function (path) {
+        return apiGet("compare", {
+          base: state.base,
+          cur: state.cur,
+          path: path
+        }).then(function (data) {
+          if (!data || !data.node)
+            throw new Error("Subtree unavailable for " + path);
+          return data.node;
+        });
       }
     });
     state.sb.setData(tree);

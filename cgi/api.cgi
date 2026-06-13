@@ -7,6 +7,8 @@ Endpoints (GET cgi-bin/api.cgi?op=...):
   op=stats&ts=<ts>             -> frozen per-scan stats
   op=tree&ts=<ts>              -> pre-built aggregated directory tree
   op=tree&ts=<ts>&path=<abs>   -> lazily aggregated subtree for a drill-down
+  op=compare&base=<ts>&cur=<ts>           -> full delta tree + change list
+  op=compare&base=<ts>&cur=<ts>&path=<abs> -> lazily diffed subtree (drill-down)
 
 Every response is application/json; errors are returned as {"error": "..."}
 with HTTP 200 so the frontend can handle them uniformly.
@@ -323,7 +325,24 @@ def op_tree(ts, path):
     return {"ts": ts, "lazy": False, "node": overview_tree(ts)}
 
 
-def op_compare(base_ts, cur_ts):
+def op_compare(base_ts, cur_ts, path=""):
+    # Lazy drill-in: diff just the subtree at `path`. The compare overview folds
+    # small directories into "(other)" exactly like the dashboard overview, so a
+    # truncated dir needs the same on-demand load the dashboard's op=tree gives --
+    # otherwise the folded children can never be expanded (an "(other)" arc that
+    # zooms to an empty disc). build_lazy keeps the full child set (no size floor)
+    # on each side, then compare_subtree pairs them into a delta subtree.
+    if path:
+        base_sub = find_node(load_full_tree(base_ts), path)
+        cur_sub = find_node(load_full_tree(cur_ts), path)
+        if base_sub is None and cur_sub is None:
+            return {"base": base_ts, "cur": cur_ts, "lazy": True,
+                    "error": "path not found in snapshot"}
+        base_lazy = aggregate.build_lazy(base_sub) if base_sub is not None else None
+        cur_lazy = aggregate.build_lazy(cur_sub) if cur_sub is not None else None
+        return {"base": base_ts, "cur": cur_ts, "lazy": True,
+                "node": diff.compare_subtree(cur_lazy, base_lazy)}
+
     result = diff.compare(compare_tree(base_ts), compare_tree(cur_ts))
     result["base"] = base_ts
     result["cur"] = cur_ts
@@ -377,8 +396,13 @@ def main():
             cache = "max-age=86400" if ts and "error" not in body else "no-cache"
             respond(body, cache=cache)
         elif op == "compare":
-            # base/cur are immutable snapshots -> the diff is cacheable
-            respond(op_compare(base, cur), cache="max-age=86400")
+            # base/cur are immutable snapshots -> the diff is cacheable. The
+            # "path not found" envelope is cheap to recompute and shouldn't pin a
+            # stale-client misstep into the browser cache, so it stays no-cache
+            # (mirrors op=tree).
+            body = op_compare(base, cur, path)
+            cache = "max-age=86400" if "error" not in body else "no-cache"
+            respond(body, cache=cache)
         else:
             respond({"error": "unknown op: %r" % op})
     except Exception:  # noqa: BLE001 - surface every failure as JSON

@@ -240,6 +240,20 @@ def _totals(root):
     }
 
 
+def compare_subtree(cur_sub, base_sub):
+    """Diff one matched directory pair into a delta subtree, for lazy drill-in
+    within the compare view (op=compare&path=...). Both sides are expected to be
+    already folded the same way (e.g. via aggregate.build_lazy); exactly one may
+    be None for an added (base None) or removed (cur None) subtree.
+
+    Returns just the delta tree node -- the self deltas, change list and summary
+    that compare() also produces are not needed for the chart and stay owned by
+    the top-level whole-tree compare. _diff_node fills every field the compare
+    sunburst reads (status, base_*, d_*, files_top), so the grafted children
+    colour and tool-tip exactly like the eagerly-loaded ones."""
+    return _build(cur_sub, base_sub)
+
+
 def compare(base_root, cur_root):
     """Diff two `(scan)` tree roots. Returns the structure served by op=compare."""
     tree = _build(cur_root, base_root)
