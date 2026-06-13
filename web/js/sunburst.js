@@ -604,6 +604,14 @@
       band = (size / 2 - holeR) / Math.min(ringCount, avail);
     }
 
+    /* Keep the centre disc + loader ring sized to the current holeR. Called
+     * wherever holeR changes: per-frame during a band tween, on tween end, on a
+     * snap, and on a RINGS change. The loader hugs the inside of the disc. */
+    function syncHoleDisc() {
+      centerCircle.attr("r", holeR);
+      loaderRing.attr("r", holeR * 0.9);
+    }
+
     /* Label font size in SVG user units (counter-scaled to a constant px). */
     function labelFontUnits() {
       return LABEL_FONT * textK;
@@ -1116,19 +1124,16 @@
               labelsAll.attr("transform", function (d) {
                 return labelTransform(d.current);
               });
-              centerCircle.attr("r", holeR);
-              loaderRing.attr("r", holeR * 0.9);
+              syncHoleDisc();
             };
           })
           .on("end.rb interrupt.rb", function () {
             holeR = holeTo;
             band = bandTo;
-            centerCircle.attr("r", holeR);
-            loaderRing.attr("r", holeR * 0.9);
+            syncHoleDisc();
           });
       } else {
-        centerCircle.attr("r", holeR);
-        loaderRing.attr("r", holeR * 0.9);
+        syncHoleDisc();
       }
       holeShown = holeTo;
       bandShown = bandTo;
@@ -2012,8 +2017,7 @@
         holeR = HOLE_R;
         band = HOLE_R;
       }
-      centerCircle.attr("r", holeR);
-      loaderRing.attr("r", holeR * 0.9); // hugs the inside of the center disc
+      syncHoleDisc();
     }
 
     function onToolbarClick(e) {
