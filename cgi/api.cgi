@@ -343,7 +343,23 @@ def op_compare(base_ts, cur_ts, path=""):
         return {"base": base_ts, "cur": cur_ts, "lazy": True,
                 "node": diff.compare_subtree(cur_lazy, base_lazy)}
 
-    result = diff.compare(compare_tree(base_ts), compare_tree(cur_ts))
+    # The folded compare trees drive the directory-level diff; the full trees are
+    # consulted lazily (only if a boundary crossing exists) to restate a folder
+    # that grew/shrank across the fold floor -- otherwise it would read as a flat
+    # added/removed even though the drill-in shows it partly pre-existed. A missing
+    # full tree just degrades to the un-reconciled (old) classification rather than
+    # failing the whole comparison, so reconciliation is best-effort.
+    def _safe_full(ts):
+        try:
+            return load_full_tree(ts)
+        except (OSError, ValueError):
+            return None
+
+    result = diff.compare(
+        compare_tree(base_ts), compare_tree(cur_ts),
+        base_full_loader=lambda: _safe_full(base_ts),
+        cur_full_loader=lambda: _safe_full(cur_ts),
+    )
     result["base"] = base_ts
     result["cur"] = cur_ts
     result["base_label"] = fmt.ts_label(base_ts)

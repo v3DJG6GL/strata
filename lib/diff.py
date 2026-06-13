@@ -240,6 +240,113 @@ def _totals(root):
     }
 
 
+def _find_node(root, path):
+    """Locate the real node at absolute `path` in a full (unfolded) tree, or
+    None. Mirrors api.cgi.find_node: skips "(other)" buckets and descends by path
+    prefix, iterative so a deep filesystem can't blow the recursion limit."""
+    cur = root
+    while True:
+        if not cur.get("other") and (cur.get("path") or "") == path:
+            return cur
+        nxt = None
+        for c in cur.get("children", []):
+            if c.get("other"):
+                continue
+            cp = (c.get("path") or "").rstrip("/")
+            if cp == path or path.startswith(cp + "/"):
+                nxt = c
+                break
+        if nxt is None:
+            return None
+        cur = nxt
+
+
+def _boundary_candidates(node):
+    """(any_added, any_removed) over the real nodes of a diff tree -- whether the
+    diff has any added/removed directory that might be a fold-boundary crossing.
+    Lets compare() skip loading a full tree when the corresponding side can't
+    have a boundary case (e.g. a diff with no removals never touches cur_full)."""
+    added = removed = False
+    stack = [node]
+    while stack:
+        n = stack.pop()
+        if n.get("path") and not n.get("other"):
+            st = n.get("status")
+            if st == "added":
+                added = True
+            elif st == "removed":
+                removed = True
+        stack.extend(n.get("children", []))
+        if added and removed:
+            break
+    return added, removed
+
+
+def _restate_added(node, bc):
+    """An 'added' node that actually existed (folded below the floor) in base:
+    pull its real base totals from the full tree, recompute the delta against the
+    node's (cur) totals, and reclassify. Its only child is the cur "(other)"
+    bucket (the chart renders that neutral and the drill expands it truthfully),
+    so children are left as-is; per-file rows are cleared because the folded side
+    has no per-file list to diff against here -- the drill itemises them."""
+    node["base_actual"] = bc.get("size_actual") or 0
+    node["base_apparent"] = bc.get("size_apparent") or 0
+    node["base_count"] = bc.get("count") or 0
+    node["d_actual"] = (node.get("size_actual") or 0) - node["base_actual"]
+    node["d_apparent"] = (node.get("size_apparent") or 0) - node["base_apparent"]
+    node["d_count"] = (node.get("count") or 0) - node["base_count"]
+    node["status"] = _classify(node["d_actual"])
+    node["files_top"] = []
+
+
+def _restate_removed(node, cc):
+    """A 'removed' ghost that actually still exists (folded below the floor) in
+    cur: pull its real cur totals from the full tree, recompute the delta against
+    the node's (base) totals, and reclassify. The folder shrank across the floor
+    rather than vanishing, so the base-side child ghosts are dropped (else they
+    emit spurious 'removed' rows for items that may still exist) and the node is
+    marked truncated so a drill re-diffs the real subtree."""
+    node["size_actual"] = cc.get("size_actual") or 0
+    node["size_apparent"] = cc.get("size_apparent") or 0
+    node["count"] = cc.get("count") or 0
+    node["d_actual"] = node["size_actual"] - (node.get("base_actual") or 0)
+    node["d_apparent"] = node["size_apparent"] - (node.get("base_apparent") or 0)
+    node["d_count"] = node["count"] - (node.get("base_count") or 0)
+    node["status"] = _classify(node["d_actual"])
+    node["children"] = []
+    node["files_top"] = []
+    node["truncated"] = True
+
+
+def _reconcile_boundary(tree, base_full, cur_full):
+    """Restate fold-boundary added/removed directories as their true delta.
+
+    build_compare folds directories below a size fraction of their scan root into
+    a synthetic "(other)" bucket. A directory that crosses that floor between two
+    scans is real on one side but folded on the other, so _build -- which matches
+    the folded trees by path -- finds no counterpart and reports the whole folder
+    'added' or 'removed'. The full (unfolded) tree still holds the counterpart, so
+    look its own totals up there and restate this node's base/cur sizes, delta and
+    status. The change table and arc colour then agree with the full-tree drill-in
+    (op=compare&path), which diffs the real subtree. Genuinely added/removed dirs
+    have no full-tree counterpart and are left untouched."""
+    def walk(node):
+        for c in node.get("children", []):
+            walk(c)
+        if node.get("other") or not node.get("path"):
+            return
+        st = node.get("status")
+        if st == "added" and base_full is not None:
+            bc = _find_node(base_full, node["path"])
+            if bc is not None:
+                _restate_added(node, bc)
+        elif st == "removed" and cur_full is not None:
+            cc = _find_node(cur_full, node["path"])
+            if cc is not None:
+                _restate_removed(node, cc)
+    walk(tree)
+
+
 def compare_subtree(cur_sub, base_sub):
     """Diff one matched directory pair into a delta subtree, for lazy drill-in
     within the compare view (op=compare&path=...). Both sides are expected to be
@@ -254,9 +361,24 @@ def compare_subtree(cur_sub, base_sub):
     return _build(cur_sub, base_sub)
 
 
-def compare(base_root, cur_root):
-    """Diff two `(scan)` tree roots. Returns the structure served by op=compare."""
+def compare(base_root, cur_root, base_full_loader=None, cur_full_loader=None):
+    """Diff two `(scan)` tree roots. Returns the structure served by op=compare.
+
+    base/cur_full_loader, when given, are zero-arg callables returning the full
+    (unfolded) tree for that side. They are invoked only when the diff has an
+    added/removed directory that might be a fold-boundary crossing, then used to
+    restate such folders as their true grew/shrank delta (see _reconcile_boundary)
+    -- so the change table and delta map agree with the full-tree drill-in. A
+    clean diff, or one whose only changes are genuine adds/removes, pays nothing
+    on the side that can't have a boundary case."""
     tree = _build(cur_root, base_root)
+
+    if base_full_loader or cur_full_loader:
+        has_added, has_removed = _boundary_candidates(tree)
+        base_full = base_full_loader() if has_added and base_full_loader else None
+        cur_full = cur_full_loader() if has_removed and cur_full_loader else None
+        if base_full is not None or cur_full is not None:
+            _reconcile_boundary(tree, base_full, cur_full)
 
     changes, counts = [], {}
     _collect(tree, None, changes, counts)
