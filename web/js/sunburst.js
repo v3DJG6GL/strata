@@ -1124,6 +1124,14 @@
       holeShown = holeTo;
       bandShown = bandTo;
 
+      /* updateCenter() reads holeR synchronously to fit/stack the centre label,
+       * but the bandMoves block above left the globals at the tween-START radii
+       * so the arcs animate from the current frame. Restore the destination radii
+       * here so the label is fitted to the disc it settles in (the ringband tween
+       * reasserts them per frame, so this stays consistent). */
+      holeR = holeTo;
+      band = bandTo;
+
       updateCenter();
       renderCrumbs();
       renderDetails();
