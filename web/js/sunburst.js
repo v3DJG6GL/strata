@@ -2075,9 +2075,12 @@
         toolbar.removeEventListener("click", onToolbarClick);
         if (svg) {
           /* Cancel any in-flight zoom tween so it doesn't keep ticking
-           * for TWEEN_MS against the about-to-be-detached subtree. */
+           * for TWEEN_MS against the about-to-be-detached subtree. The
+           * ring-band tween is a NAMED transition, which an unnamed
+           * interrupt() leaves running, so cancel it explicitly too. */
           svg.interrupt();
           svg.selectAll("*").interrupt();
+          gArcs.interrupt("ringband");
           if (svg.node() && svg.node().parentNode) {
             svg.node().parentNode.removeChild(svg.node());
           }
