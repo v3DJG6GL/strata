@@ -924,6 +924,14 @@
       var bandMoves =
         animate && (holeShown !== holeTo || bandShown !== bandTo);
       gArcs.interrupt("ringband");
+      /* interrupt.rb fires synchronously and writes a still-running tween's OLD
+       * destination radii into holeR/band. Re-assert THIS render's destination
+       * so the snap path (bandMoves false → no ringband tween to correct it, e.g.
+       * a RINGS change landing mid-zoom) draws arcs/labels/disc at the right
+       * radii instead of the previous focus's band. The bandMoves block then
+       * overrides with the on-screen start values for the animated path. */
+      holeR = holeTo;
+      band = bandTo;
       if (bandMoves) {
         holeR = holeShown;
         band = bandShown;
