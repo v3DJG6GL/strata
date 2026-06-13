@@ -20,6 +20,7 @@ import os
 import re
 import sys
 import traceback
+import zlib
 
 sys.path.insert(0, os.environ.get("STRATA_LIB_DIR", "/app/lib"))
 
@@ -81,7 +82,13 @@ def load_full_tree_or_none(ts):
     "internal error" the blanket handler would otherwise surface."""
     try:
         return load_full_tree(ts)
-    except (OSError, ValueError):
+    except (OSError, ValueError, zlib.error, EOFError):
+        # gzip.open + json.load raise OSError (incl. gzip.BadGzipFile) / ValueError
+        # (JSONDecodeError) for a missing or malformed file, but a corrupt deflate
+        # stream surfaces as zlib.error and a truncated one (e.g. a scan killed
+        # mid-write) as EOFError -- neither subclasses OSError/ValueError, so catch
+        # them too or a half-written detail artifact fails the whole compare
+        # instead of degrading to the un-reconciled (best-effort) classification.
         return None
 
 
