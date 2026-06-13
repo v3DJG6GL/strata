@@ -90,17 +90,21 @@ def find_node(node, path):
 
     (other) buckets inherit their parent's path (see aggregate.py); skip them
     explicitly so the lookup is invariant under children-iteration order.
-    Iterative so a deeply-nested filesystem won't blow the recursion limit."""
+    Iterative so a deeply-nested filesystem won't blow the recursion limit.
+    Trailing slashes are normalised on both sides so a "/foo" query still
+    matches a "/foo/" node (and vice-versa): the prefix descent already rstrips,
+    so the equality tests must too or a trailing-slash node is missed."""
+    path = (path or "").rstrip("/")
     cur = node
     while True:
-        if not cur.get("other") and (cur.get("path") or "") == path:
+        if not cur.get("other") and (cur.get("path") or "").rstrip("/") == path:
             return cur
         nxt = None
         for c in cur.get("children", []):
             if c.get("other"):
                 continue
-            cp = c.get("path") or ""
-            if cp == path or path.startswith(cp.rstrip("/") + "/"):
+            cp = (c.get("path") or "").rstrip("/")
+            if cp == path or path.startswith(cp + "/"):
                 nxt = c
                 break
         if nxt is None:

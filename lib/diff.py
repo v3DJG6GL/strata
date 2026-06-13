@@ -243,17 +243,20 @@ def _totals(root):
 def _find_node(root, path):
     """Locate the real node at absolute `path` in a full (unfolded) tree, or
     None. Mirrors api.cgi.find_node: skips "(other)" buckets and descends by path
-    prefix, iterative so a deep filesystem can't blow the recursion limit."""
+    prefix, iterative so a deep filesystem can't blow the recursion limit.
+    Trailing slashes are normalised on both sides (the prefix descent already
+    rstrips, so the equality tests must too)."""
+    path = (path or "").rstrip("/")
     cur = root
     while True:
-        if not cur.get("other") and (cur.get("path") or "") == path:
+        if not cur.get("other") and (cur.get("path") or "").rstrip("/") == path:
             return cur
         nxt = None
         for c in cur.get("children", []):
             if c.get("other"):
                 continue
-            cp = c.get("path") or ""
-            if cp == path or path.startswith(cp.rstrip("/") + "/"):
+            cp = (c.get("path") or "").rstrip("/")
+            if cp == path or path.startswith(cp + "/"):
                 nxt = c
                 break
         if nxt is None:
