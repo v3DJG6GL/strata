@@ -252,8 +252,8 @@ def _find_node(root, path):
         for c in cur.get("children", []):
             if c.get("other"):
                 continue
-            cp = (c.get("path") or "").rstrip("/")
-            if cp == path or path.startswith(cp + "/"):
+            cp = c.get("path") or ""
+            if cp == path or path.startswith(cp.rstrip("/") + "/"):
                 nxt = c
                 break
         if nxt is None:
