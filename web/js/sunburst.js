@@ -662,7 +662,11 @@
       /* A compare-mode bucket made up only of deleted ghosts (no current items)
        * labels itself "N deleted" instead of a misleading "+0 folders"/"files". */
       if (data.other) {
-        if (!(data.other_dirs > 0) && data._deletedCount > 0)
+        /* Strict === 0 (not !(>0)): a bucket folding a count-less compare
+         * "(other)" carries the unknown sentinel (other_dirs === null) yet still
+         * holds live folders, so it must fall through to "folders" rather than
+         * claim "N deleted" -- mirrors the _remainCount === 0 file guard below. */
+        if (data.other_dirs === 0 && data._deletedCount > 0)
           return data._deletedCount + " deleted";
         /* unknown grouped-dir count (matches the tooltip's "Several") — never a
          * misleading "+0 folders" on a bucket that does hold folders. */
