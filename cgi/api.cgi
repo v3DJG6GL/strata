@@ -358,8 +358,17 @@ def op_compare(base_ts, cur_ts, path=""):
                     "error": "path not found in snapshot"}
         base_lazy = aggregate.build_lazy(base_sub) if base_sub is not None else None
         cur_lazy = aggregate.build_lazy(cur_sub) if cur_sub is not None else None
-        return {"base": base_ts, "cur": cur_ts, "lazy": True,
-                "node": diff.compare_subtree(cur_lazy, base_lazy)}
+        out = {"base": base_ts, "cur": cur_ts, "lazy": True,
+               "node": diff.compare_subtree(cur_lazy, base_lazy)}
+        # If exactly one side's detail tree was unreadable (load returned None)
+        # while the path resolved on the other, the drill can't tell a genuine
+        # add/remove from a transient miss -- compare_subtree renders the whole
+        # subtree wholly added/removed. Mark it provisional so main() serves it
+        # no-cache rather than pinning that wrong diff for a day (mirrors the
+        # overview's reconcile_degraded; both reach the same cache guard).
+        if (base_full is None) != (cur_full is None):
+            out["reconcile_degraded"] = True
+        return out
 
     # The folded compare trees drive the directory-level diff; the full trees are
     # consulted lazily (only if a boundary crossing exists) to restate a folder
