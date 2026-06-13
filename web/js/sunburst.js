@@ -396,6 +396,21 @@
       return data && data.children && data.children.length > 0;
     }
 
+    /* Does it have any loaded child that is a real directory (not a folded
+     * server "(other)" bucket)? A truncated node whose ONLY child is an
+     * "(other)" bucket renders as a dead single-slice view until its real
+     * children are lazily fetched — focusByPath uses this to decide whether a
+     * programmatic focus (table click, deep link) must expand first. */
+    function hasRealChildren(data) {
+      return !!(
+        data &&
+        data.children &&
+        data.children.some(function (c) {
+          return !c.other;
+        })
+      );
+    }
+
     /* ---- hierarchy / partition ----------------------------------------- */
     /* Key invariant: a directory's arc angle ∝ its own size_actual, and its
      * children fit within its angular span (child sizes sum to ≤ parent).
@@ -1876,6 +1891,24 @@
 
       var hit = findHierByPath(path);
       if (hit) {
+        var data = hit.data || {};
+        /* If the target is truncated and its only loaded children are a folded
+         * server "(other)" bucket (or none), zooming to it would show a dead
+         * single-"(other)" view ("folders" 100%, "No children loaded yet"). A
+         * click-drill expands such a node via fetchSubtree; a programmatic focus
+         * (Changes-table row, highlight card, deep link, metric-toggle restore)
+         * must do the same. lazyLoad grafts the real children and its rebuild
+         * zooms in, so we don't zoom here first. Mirrors drill()'s needFetch. */
+        if (
+          data.truncated &&
+          opts.fetchSubtree &&
+          data.path != null &&
+          !subtreeCache[data.path] &&
+          !hasRealChildren(data)
+        ) {
+          lazyLoad(hit);
+          return;
+        }
         /* silent: the router already owns the URL hash. */
         if (hit !== focusNode) zoomTo(hit, true);
         return;
