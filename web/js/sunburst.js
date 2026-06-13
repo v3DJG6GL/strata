@@ -734,7 +734,7 @@
 
     function fillDirBucket(b, parent, dirs) {
       var sa = 0, sk = 0, ea = 0, ek = 0, ca = 0, ck = 0,
-        cnt = 0, dn = 0, deleted = 0, truncated = false;
+        cnt = 0, dn = 0, deleted = 0, truncated = false, unknownDirs = false;
       dirs.forEach(function (c) {
         var d = c.data || {};
         sa += Number(d.size_apparent || 0);
@@ -755,12 +755,21 @@
          * counted separately so an all-deleted bucket can label itself "N deleted". */
         if (d.status === "removed") { deleted += 1; return; }
         cnt += Number(d.count || 0);
-        dn += d.other ? Number(d.other_dirs || 0) : 1;
+        /* A folded compare "(other)" carries no dir count (other_dirs null), so
+         * the merged tally is unknown -- mirror fillFileBucket's null sentinel so
+         * the bucket reads "folders" rather than a misleading "+0 folders". */
+        if (d.other) {
+          if (d.other_dirs == null) unknownDirs = true;
+          else dn += Number(d.other_dirs);
+        } else {
+          dn += 1;
+        }
         truncated = truncated || !!d.truncated;
       });
       b.data = {
         name: "(other)", other: true, _foldBucket: true,
-        path: parent.data.path, other_dirs: dn, _deletedCount: deleted,
+        path: parent.data.path, other_dirs: unknownDirs ? null : dn,
+        _deletedCount: deleted,
         size_actual: sk, size_apparent: sa,
         exclusive_actual: ek, exclusive_apparent: ea,
         copy_actual: ck, copy_apparent: ca, count: cnt,
