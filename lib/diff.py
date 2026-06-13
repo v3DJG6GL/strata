@@ -373,13 +373,25 @@ def compare(base_root, cur_root, base_full_loader=None, cur_full_loader=None):
     restate such folders as their true grew/shrank delta (see _reconcile_boundary)
     -- so the change table and delta map agree with the full-tree drill-in. A
     clean diff, or one whose only changes are genuine adds/removes, pays nothing
-    on the side that can't have a boundary case."""
+    on the side that can't have a boundary case.
+
+    `reconcile_degraded` in the result is True when a side HAD fold-boundary
+    candidates but its loader returned None (a missing/unreadable full tree): the
+    diff then keeps the un-reconciled classification for those dirs, so the result
+    is PROVISIONAL and the caller should serve it no-cache rather than pin a
+    transient miss for a day."""
     tree = _build(cur_root, base_root)
 
+    degraded = False
     if base_full_loader or cur_full_loader:
         has_added, has_removed = _boundary_candidates(tree)
-        base_full = base_full_loader() if has_added and base_full_loader else None
-        cur_full = cur_full_loader() if has_removed and cur_full_loader else None
+        base_full = cur_full = None
+        if has_added and base_full_loader:
+            base_full = base_full_loader()
+            degraded = degraded or base_full is None
+        if has_removed and cur_full_loader:
+            cur_full = cur_full_loader()
+            degraded = degraded or cur_full is None
         if base_full is not None or cur_full is not None:
             _reconcile_boundary(tree, base_full, cur_full)
 
@@ -404,4 +416,5 @@ def compare(base_root, cur_root, base_full_loader=None, cur_full_loader=None):
         },
         "changes": changes,
         "tree": tree,
+        "reconcile_degraded": degraded,
     }

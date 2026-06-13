@@ -427,9 +427,13 @@ def main():
             # base/cur are immutable snapshots -> the diff is cacheable. The
             # "path not found" envelope is cheap to recompute and shouldn't pin a
             # stale-client misstep into the browser cache, so it stays no-cache
-            # (mirrors op=tree).
+            # (mirrors op=tree). A reconcile_degraded diff (a full tree was
+            # momentarily unreadable, so fold-boundary dirs stayed un-reconciled)
+            # is provisional -- also no-cache, so the correct diff is recomputed
+            # on the next request instead of being pinned for a day.
             body = op_compare(base, cur, path)
-            cache = "max-age=86400" if "error" not in body else "no-cache"
+            cacheable = "error" not in body and not body.get("reconcile_degraded")
+            cache = "max-age=86400" if cacheable else "no-cache"
             respond(body, cache=cache)
         else:
             respond({"error": "unknown op: %r" % op})
