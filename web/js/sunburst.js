@@ -1040,10 +1040,23 @@
         });
       var labelsAll = labelsEnter.merge(labels);
       if (animate) {
+        /* The label TEXT is set once and does not reflow during the tween, so it
+         * must be fitted to the DESTINATION ring thickness (holeTo/bandTo) — not
+         * the tween-start values the globals currently hold when the band is
+         * changing (see the bandMoves block above, which sets band = bandShown).
+         * Fitting to the old, fatter band of a previous focus would leave the
+         * labels too long and overflow the ring on the way in. Only the transform
+         * animates, and it reads the live (tweening) band frame-by-frame. */
+        var holeCur = holeR,
+          bandCur = band;
+        holeR = holeTo;
+        band = bandTo;
+        labelsAll.text(function (d) {
+          return labelFor(d, d.target);
+        });
+        holeR = holeCur;
+        band = bandCur;
         labelsAll
-          .text(function (d) {
-            return labelFor(d, d.target);
-          })
           .transition()
           .duration(dur)
           .attr("opacity", function () {
