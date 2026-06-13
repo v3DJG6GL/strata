@@ -296,10 +296,11 @@ def _boundary_candidates(node):
 def _restate_added(node, bc):
     """An 'added' node that actually existed (folded below the floor) in base:
     pull its real base totals from the full tree, recompute the delta against the
-    node's (cur) totals, and reclassify. Its only child is the cur "(other)"
-    bucket (the chart renders that neutral and the drill expands it truthfully),
-    so children are left as-is; per-file rows are cleared because the folded side
-    has no per-file list to diff against here -- the drill itemises them."""
+    node's (cur) totals, and reclassify. Children are left as-is: _reconcile_boundary
+    walks post-order, so any real added descendant has already been restated, and a
+    folded cur "(other)" child renders neutral and drills truthfully. Per-file rows
+    are cleared because the folded base side has no per-file list to diff against
+    here -- the drill itemises them."""
     node["base_actual"] = bc.get("size_actual") or 0
     node["base_apparent"] = bc.get("size_apparent") or 0
     node["base_count"] = bc.get("count") or 0
