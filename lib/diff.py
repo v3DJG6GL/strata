@@ -337,11 +337,14 @@ def _reconcile_boundary(tree, base_full, cur_full):
     a synthetic "(other)" bucket. A directory that crosses that floor between two
     scans is real on one side but folded on the other, so _build -- which matches
     the folded trees by path -- finds no counterpart and reports the whole folder
-    'added' or 'removed'. The full (unfolded) tree still holds the counterpart, so
+    'added' or 'removed'. The detail tree usually still holds the counterpart, so
     look its own totals up there and restate this node's base/cur sizes, delta and
     status. The change table and arc colour then agree with the full-tree drill-in
-    (op=compare&path), which diffs the real subtree. Genuinely added/removed dirs
-    have no full-tree counterpart and are left untouched."""
+    (op=compare&path), which diffs the real subtree. A node with no counterpart in
+    the detail tree is left untouched -- either it is genuinely added/removed, or
+    its counterpart fell below the indexer's DETAIL_FLOOR (1 MiB) and was pruned
+    from the detail tree, leaving the folder classified 'added'/'removed' with its
+    sub-floor side understated by under DETAIL_FLOOR."""
     def walk(node):
         for c in node.get("children", []):
             walk(c)
