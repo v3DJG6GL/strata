@@ -1,14 +1,22 @@
 version: 2
 updates:
+  # cooldown holds a new release for 3 days before Dependabot proposes it, so
+  # freshly-published (possibly compromised or quickly-yanked) versions never
+  # reach a PR. Security updates are exempt by design: cooldown applies only
+  # to version updates, never to Dependabot security updates.
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 3
 
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+    cooldown:
+      default-days: 3
     groups:
       all-actions:
         patterns:
