@@ -65,19 +65,55 @@
   /* ====================================================================== *
    * DASHBOARD                                                              *
    * ====================================================================== */
-  function renderDashboard() {
+  /* Active scan-path scope ("" = all paths) + the last op=snapshots payload,
+   * cached so a scope flip re-renders in place without a refetch. */
+  var dashScope = "";
+  var lastSnapsData = null;
+
+  /* One small "scoped to <path>" tag per affected section title, so a
+   * scrolled screenshot can never be misread as an all-paths total. */
+  function scopeTagHTML(id) {
+    return (
+      '<span class="scope-tag" id="' + id + '" hidden>' +
+      '<span class="scope-tag-dot"></span>' +
+      '<span class="scope-tag-path mono"></span></span>'
+    );
+  }
+
+  function updateScopeTags() {
+    ["trend-scope-tag", "snap-scope-tag"].forEach(function (id) {
+      var tag = document.getElementById(id);
+      if (!tag) return;
+      if (dashScope) {
+        tag.hidden = false;
+        tag.title = dashScope;
+        tag.querySelector(".scope-tag-dot").style.background =
+          U.rootColor(dashScope);
+        tag.querySelector(".scope-tag-path").textContent =
+          U.shortPath(dashScope, 40);
+      } else {
+        tag.hidden = true;
+      }
+    });
+  }
+
+  function renderDashboard(scope) {
     clearPoll();
     /* Fresh mount — drop any cross-route scan-state so the first poll tick
      * after a scan-detail → dashboard return doesn't trip the just-finished
      * branch (which would fire a redundant loadSnapshots). */
     lastScanning = null;
+    dashScope = scope || "";
+    lastSnapsData = null;
     appEl.innerHTML =
       header() +
       '<main class="page page-dashboard">' +
+      '<div id="scope-slot"></div>' +
       '<div id="live-slot"></div>' +
       '<section class="trend-section" id="trend-section" hidden>' +
       '<div class="section-head">' +
       '<h2 class="section-title">Storage over time</h2>' +
+      scopeTagHTML("trend-scope-tag") +
       '<div class="section-head-right" id="trend-controls"></div>' +
       "</div>" +
       '<div id="trend-slot"></div>' +
@@ -85,6 +121,7 @@
       '<section class="snap-section">' +
       '<div class="section-head">' +
       '<h2 class="section-title">Snapshots</h2>' +
+      scopeTagHTML("snap-scope-tag") +
       '<div class="section-head-right">' +
       '<span class="section-meta mono" id="snap-count"></span>' +
       '<a class="btn btn-compare" href="#/compare">⇄ Compare scans</a>' +
@@ -99,6 +136,57 @@
     loadSnapshots();
     pollStatus(); // immediate, then every 4s
     pollTimer = setInterval(pollStatus, 4000);
+  }
+
+  /* Scope change → persist, sync the URL (suppressed: the dashboard is
+   * already mounted), re-render the scoped panels from cached data. */
+  function setDashScope(scope) {
+    scope = scope || "";
+    if (scope === dashScope) return;
+    dashScope = scope;
+    U.scopeSave(scope);
+    var hash = scope ? "#/?scope=" + encodeURIComponent(scope) : "#/";
+    suppressHash = hash;
+    if (location.hash !== hash) location.hash = hash;
+    else suppressHash = null;
+    if (lastSnapsData) renderSnapshotList(lastSnapsData);
+  }
+
+  /* Rebuild the scope rail. Returns silently for <2 known roots (the rail
+   * costs single-path deployments nothing). An unknown scoped path (edited
+   * STRATA_SCAN_PATHS, stale link) falls back to All with a notice. */
+  function renderScopeRail(snaps) {
+    var slot = document.getElementById("scope-slot");
+    if (!slot) return;
+    var roots = U.rootUnion(snaps);
+
+    var notice = null;
+    if (
+      dashScope &&
+      !roots.some(function (r) {
+        return r.path === dashScope;
+      })
+    ) {
+      notice = dashScope;
+      dashScope = "";
+      U.scopeSave("");
+      /* replaceState: fix the URL without a history entry or a re-route */
+      if (global.history && global.history.replaceState) {
+        global.history.replaceState(null, "", "#/");
+      }
+    }
+
+    slot.innerHTML = "";
+    var rail = U.scopeRail(roots, dashScope, setDashScope);
+    if (rail) slot.appendChild(rail);
+    if (notice && rail) {
+      var n = document.createElement("div");
+      n.className = "scope-notice";
+      n.textContent =
+        U.shortPath(notice, 48) +
+        " is not part of any snapshot — showing all paths.";
+      slot.appendChild(n);
+    }
   }
 
   function loadSnapshots() {
@@ -120,10 +208,16 @@
     var countEl = document.getElementById("snap-count");
     if (!listEl) return;
 
+    lastSnapsData = data;
     var snaps = (data && data.snapshots) || [];
     if (countEl)
       countEl.textContent =
         snaps.length + (snaps.length === 1 ? " scan" : " scans");
+
+    /* scope rail first — it validates dashScope (may reset it to All), and
+     * everything rendered below must see the validated value. */
+    renderScopeRail(snaps);
+    updateScopeTags();
 
     if (!snaps.length) {
       listEl.innerHTML =
@@ -145,16 +239,35 @@
     var trendSlot = document.getElementById("trend-slot");
     var trendSec = document.getElementById("trend-section");
     if (trendSlot && global.Trends) {
-      var drawn = global.Trends.render(trendSlot, snaps);
+      var drawn = global.Trends.render(trendSlot, snaps, {
+        scope: dashScope,
+        onScopeChange: setDashScope
+      });
       if (trendSec) trendSec.hidden = !drawn;
     }
   }
 
   function snapshotCard(s, index) {
     var total = s.total || {};
+    var roots = s.roots || [];
+
+    /* Scoped view: the card headlines the scoped root's numbers instead of
+     * the combined totals, and links straight to the root-focused sunburst.
+     * A snapshot that predates the scoped path shows an explicit gap rather
+     * than silently falling back to the combined size. */
+    var scopedRoot = null;
+    if (dashScope) {
+      roots.forEach(function (r) {
+        if (r && r.path === dashScope) scopedRoot = r;
+      });
+    }
+
     var card = document.createElement("a");
     card.className = "snap-card";
-    card.href = "#/scan/" + encodeURIComponent(s.ts);
+    card.href =
+      "#/scan/" +
+      encodeURIComponent(s.ts) +
+      (scopedRoot ? "/" + encodeURIComponent(dashScope) : "");
     card.style.animationDelay = Math.min(index * 45, 360) + "ms";
 
     /* card head */
@@ -170,41 +283,62 @@
     /* headline size */
     var hero = document.createElement("div");
     hero.className = "snap-card-hero";
+    var heroSize = dashScope
+      ? scopedRoot
+        ? U.humanBytes(scopedRoot.size_actual)
+        : "—"
+      : U.humanBytes(total.size_actual);
+    var heroLabel = dashScope
+      ? scopedRoot
+        ? 'on disk · <span class="mono">' +
+          U.esc(U.shortPath(dashScope, 28)) +
+          "</span>"
+        : "path not in this scan"
+      : "on disk";
     hero.innerHTML =
       '<span class="snap-card-size mono">' +
-      U.esc(U.humanBytes(total.size_actual)) +
+      U.esc(heroSize) +
       "</span>" +
-      '<span class="snap-card-size-label">on disk</span>';
+      '<span class="snap-card-size-label">' +
+      heroLabel +
+      "</span>";
     card.appendChild(hero);
 
-    /* metric strip */
+    /* metric strip — Files/Dirs follow the scope; Duration/DB are properties
+     * of the whole scan, so under a scope they dim and say so. */
+    var mFiles = dashScope ? (scopedRoot || {}).files : total.files;
+    var mDirs = dashScope ? (scopedRoot || {}).dirs : total.dirs;
     var metrics = document.createElement("div");
     metrics.className = "snap-card-metrics";
     metrics.appendChild(
       metricCell(
         "Files",
-        U.humanCount(total.files),
-        total.files != null ? U.commaCount(total.files) + " files" : null
+        U.humanCount(mFiles),
+        mFiles != null ? U.commaCount(mFiles) + " files" : null
       )
     );
     metrics.appendChild(
       metricCell(
         "Dirs",
-        U.humanCount(total.dirs),
-        total.dirs != null ? U.commaCount(total.dirs) + " dirs" : null
+        U.humanCount(mDirs),
+        mDirs != null ? U.commaCount(mDirs) + " dirs" : null
       )
     );
-    metrics.appendChild(
-      metricCell(
-        "Duration",
-        U.humanDuration(s.duration_sec)
-      )
-    );
-    metrics.appendChild(metricCell("DB", U.humanBytes(s.db_bytes)));
+    var durCell = metricCell("Duration", U.humanDuration(s.duration_sec));
+    var dbCell = metricCell("DB", U.humanBytes(s.db_bytes));
+    if (dashScope) {
+      durCell.classList.add("is-global");
+      dbCell.classList.add("is-global");
+      durCell.title = "whole scan (not per-path)";
+      dbCell.title = "whole scan (not per-path)";
+    }
+    metrics.appendChild(durCell);
+    metrics.appendChild(dbCell);
     card.appendChild(metrics);
 
-    /* per-root breakdown bar + list */
-    var roots = s.roots || [];
+    /* per-root breakdown bar + list — segments wear each root's identity
+     * colour (same colour as its trend series / scope chip); under a scope
+     * the other roots dim instead of disappearing, keeping proportions. */
     if (roots.length) {
       var rootSum = roots.reduce(function (a, r) {
         return a + (Number(r.size_actual) || 0);
@@ -212,12 +346,13 @@
 
       var bar = document.createElement("div");
       bar.className = "snap-card-bar";
-      roots.forEach(function (r, ri) {
+      roots.forEach(function (r) {
         var seg = document.createElement("span");
         seg.className = "snap-card-bar-seg";
         var w = rootSum ? ((Number(r.size_actual) || 0) / rootSum) * 100 : 0;
         seg.style.width = w + "%";
-        seg.style.opacity = String(Math.max(0.1, 1 - ri * 0.18));
+        seg.style.background = U.rootColor(r.path);
+        seg.style.opacity = dashScope && r.path !== dashScope ? "0.18" : "0.9";
         seg.title = r.path + " — " + U.humanBytes(r.size_actual);
         bar.appendChild(seg);
       });
@@ -227,7 +362,13 @@
       rl.className = "snap-card-roots";
       roots.forEach(function (r) {
         var rr = document.createElement("div");
-        rr.className = "snap-card-root";
+        rr.className =
+          "snap-card-root" +
+          (dashScope
+            ? r.path === dashScope
+              ? " is-scoped"
+              : " is-dim"
+            : "");
         rr.innerHTML =
           '<span class="snap-card-root-path">' +
           U.esc(r.path) +
@@ -242,7 +383,11 @@
 
     var go = document.createElement("div");
     go.className = "snap-card-go";
-    go.innerHTML = "Explore <span aria-hidden=\"true\">→</span>";
+    go.innerHTML = scopedRoot
+      ? 'Explore <span class="mono">' +
+        U.esc(U.shortPath(dashScope, 28)) +
+        '</span> <span aria-hidden="true">→</span>'
+      : 'Explore <span aria-hidden="true">→</span>';
     card.appendChild(go);
 
     return card;
@@ -480,7 +625,7 @@
     compareHandle = null;
   }
 
-  function renderCompare(base, cur) {
+  function renderCompare(base, cur, scope) {
     clearPoll();
     clearDetail();
     clearTrends();
@@ -506,17 +651,33 @@
       slot.appendChild(errorBox("Comparison module failed to load."));
       return;
     }
+    function compareHash(b, c, sc) {
+      var hash = "#/compare";
+      if (b && c)
+        hash += "/" + encodeURIComponent(b) + "/" + encodeURIComponent(c);
+      if (sc) hash += "?scope=" + encodeURIComponent(sc);
+      return hash;
+    }
+
     compareHandle = global.ComparePage.render(slot, {
       base: base || "",
       cur: cur || "",
+      scope: scope || "",
       /* selector changes flow back through the hash so a comparison is
        * shareable and survives back/forward. */
-      onNavigate: function (b, c) {
-        var hash = "#/compare";
-        if (b && c)
-          hash += "/" + encodeURIComponent(b) + "/" + encodeURIComponent(c);
+      onNavigate: function (b, c, sc) {
+        var hash = compareHash(b, c, sc);
         if (location.hash === hash) route();
         else location.hash = hash;
+      },
+      /* scope flips re-render in place (op=compare data is scope-independent);
+       * the hash is updated without a re-route, mirroring the sunburst's
+       * focus sync. */
+      onScopeSync: function (b, c, sc) {
+        var hash = compareHash(b, c, sc);
+        suppressHash = hash;
+        if (location.hash !== hash) location.hash = hash;
+        else suppressHash = null;
       }
     });
   }
@@ -542,7 +703,24 @@
 
   function parseHash() {
     var h = location.hash.replace(/^#/, "");
-    if (!h || h === "/") return { route: "dashboard" };
+
+    /* Hash-query (e.g. "#/?scope=%2Fmnt%2Fdata"): split it off BEFORE the
+     * path-segment parse so a query can never corrupt ts/path decoding. */
+    var scope = "";
+    var qi = h.indexOf("?");
+    if (qi >= 0) {
+      h.slice(qi + 1)
+        .split("&")
+        .forEach(function (kv) {
+          var eq = kv.indexOf("=");
+          if ((eq >= 0 ? kv.slice(0, eq) : kv) === "scope") {
+            scope = decodePart(eq >= 0 ? kv.slice(eq + 1) : "");
+          }
+        });
+      h = h.slice(0, qi);
+    }
+
+    if (!h || h === "/") return { route: "dashboard", scope: scope };
 
     var parts = h.split("/").filter(function (p) {
       return p.length > 0;
@@ -559,10 +737,11 @@
       return {
         route: "compare",
         base: parts[1] ? decodePart(parts[1]) : "",
-        cur: parts[2] ? decodePart(parts[2]) : ""
+        cur: parts[2] ? decodePart(parts[2]) : "",
+        scope: scope
       };
     }
-    return { route: "dashboard" };
+    return { route: "dashboard", scope: scope };
   }
 
   function route() {
@@ -595,11 +774,11 @@
       clearCompare();
       renderScanDetail(r.ts, r.focusPath);
     } else if (r.route === "compare") {
-      renderCompare(r.base, r.cur);
+      renderCompare(r.base, r.cur, r.scope);
     } else {
       clearDetail();
       clearCompare();
-      renderDashboard();
+      renderDashboard(r.scope);
     }
   }
 
@@ -616,6 +795,23 @@
       global.history.replaceState(null, "", "#/");
     } else if (!location.hash) {
       location.hash = "#/";
+    }
+    /* Restore the last scan-path scope on a bare entry URL — ONLY here at
+     * boot. After boot the URL alone drives scope, so Back/Forward across
+     * "#/?scope=…" ↔ "#/" behaves; adopting localStorage on every route
+     * would make a bare "#/" reached via Back snap back to the saved scope. */
+    var savedScope = U.scopeLoad();
+    if (
+      savedScope &&
+      location.hash === "#/" &&
+      global.history &&
+      global.history.replaceState
+    ) {
+      global.history.replaceState(
+        null,
+        "",
+        "#/?scope=" + encodeURIComponent(savedScope)
+      );
     }
     route();
   }

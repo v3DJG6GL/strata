@@ -1,20 +1,26 @@
 /* ==========================================================================
  * trends.js — "storage over time" panel for the dashboard
  *
- *   Trends.render(containerEl, snapshots)   // snapshots = op=snapshots list
+ *   Trends.render(containerEl, snapshots, opts)
+ *     snapshots = op=snapshots list
+ *     opts.scope = scan-root path to narrow every panel to ("" = all)
+ *     opts.onScopeChange = function(path) — invoked by the Δ "change by
+ *       path" rows so a click there can drive the dashboard's scope rail
  *   -> draws the panel; returns true if drawn (needs >= 2 dated snapshots),
  *      false otherwise. Idempotent re-renders on the same container are cheap.
  *
  * Panel contents:
  *   - Section controls (injected into the container's section-head-right):
- *       [ Auto-fit | Zero ]   [ Total | Lines | Stacked ]
+ *       [ Auto-fit | Zero ]   [ Total | By path | Stacked ]
  *   - Main chart    — total / per-root lines / stacked area
- *   - Chip legend   — one chip per root, click to toggle (lines/stacked only)
- *   - Δ panel       — change-since-first, signed area with green/red fills
+ *   - Chip legend   — one chip per root, click to toggle, alt-click to solo
+ *   - Δ panel       — change-since-first, signed area with green/red fills,
+ *                     plus per-root signed "change by path" bars (All scope)
  *
- * State (mode + visibility + per-root palette) persists in localStorage under
- * `strata.trends.v1`. The data flattener is pure; rendering is full-redraw on
- * any state change — cheap for the snapshot counts we deal with.
+ * State (mode + visibility) persists in localStorage under `strata.trends.v1`;
+ * the per-root palette is shared app-wide via Util.rootColor. The data
+ * flattener is pure; rendering is full-redraw on any state change — cheap
+ * for the snapshot counts we deal with.
  *
  * Depends on: d3 (v7 global), Util.
  * ======================================================================== */
@@ -25,24 +31,6 @@
   var U = global.Util;
 
   var LS_KEY = "strata.trends.v1";
-
-  /* d3.schemeTableau10 with the brand accent (#58a6ff) reserved for the
-   * total overlay. The 5th slot of Tableau10 ("#59a14f", green) is replaced
-   * with a teal to avoid colliding with the delta-panel positive-fill green
-   * (--green = #3fb950). The accent-blue Tableau slot ("#4e79a7") is kept,
-   * since it is dark enough to not be confused with our brand accent. */
-  var PALETTE = [
-    "#e15759", /* red       */
-    "#f28e2b", /* orange    */
-    "#76b7b2", /* teal      */
-    "#4e79a7", /* dark blue */
-    "#edc948", /* yellow    */
-    "#b07aa1", /* purple    */
-    "#ff9da7", /* pink      */
-    "#9c755f", /* brown     */
-    "#bab0ac", /* warm grey */
-    "#59a14f"  /* green — last because it overlaps the delta panel */
-  ];
 
   /* Module-level state — survives re-renders on the same dashboard view. */
   var resizeObs = null;
@@ -68,7 +56,6 @@
           ? s.viewMode
           : "total",
       hiddenRoots: Array.isArray(s.hiddenRoots) ? s.hiddenRoots.slice() : [],
-      colors: s.colors && typeof s.colors === "object" ? s.colors : {},
       range: sanitizeRange(s.range),
       interactMode: s.interactMode === "zoom" ? "zoom" : "inspect"
     };
@@ -82,7 +69,6 @@
           yMode: state.yMode,
           viewMode: state.viewMode,
           hiddenRoots: state.hiddenRoots,
-          colors: state.colors,
           range: state.range,
           interactMode: state.interactMode
         })
@@ -347,24 +333,42 @@
     return { dates: dates, labels: labels, ts: ts, total: total, roots: roots };
   }
 
-  /* Stable palette assignment: a root keeps its colour across sessions.
-   * Persisted in state.colors. New roots take the next free slot; once all
-   * are used, cycle modulo PALETTE.length. */
+  /* Root identity colour — shared app-wide (scope rail, cards, compare)
+   * via Util so a root is the same colour on every surface. */
   function assignColor(path) {
-    if (state.colors[path] != null) return PALETTE[state.colors[path] % PALETTE.length];
-    var used = {};
-    Object.keys(state.colors).forEach(function (k) {
-      used[state.colors[k]] = true;
-    });
-    var i = 0;
-    while (used[i] && i < PALETTE.length) i++;
-    if (i >= PALETTE.length) {
-      /* all taken; pick the lowest-numbered slot (modular cycle) */
-      i = Object.keys(state.colors).length % PALETTE.length;
+    return U.rootColor(path);
+  }
+
+  /* Narrow flattened data to one scan root: rows where the root was scanned
+   * become the series, `total` becomes that root's values, and the roots
+   * list collapses to just it — everything downstream (range filter, lead
+   * carry, Δ baseline, y-domain) then works unchanged. Pure. */
+  function applyScopeData(data, scope) {
+    if (!data || !scope) return data;
+    var rt = null;
+    for (var i = 0; i < data.roots.length; i++) {
+      if (data.roots[i].path === scope) rt = data.roots[i];
     }
-    state.colors[path] = i;
-    saveState();
-    return PALETTE[i];
+    /* Unknown root — the dashboard validates scope before calling us, so
+     * this only happens transiently; fall back to the unscoped data. */
+    if (!rt) return data;
+    var keep = [];
+    rt.values.forEach(function (v, j) {
+      if (v != null) keep.push(j);
+    });
+    return {
+      dates: keep.map(function (j) { return data.dates[j]; }),
+      labels: keep.map(function (j) { return data.labels[j]; }),
+      ts: keep.map(function (j) { return data.ts[j]; }),
+      total: keep.map(function (j) { return rt.values[j]; }),
+      roots: [
+        {
+          path: rt.path,
+          values: keep.map(function (j) { return rt.values[j]; }),
+          latest: rt.latest
+        }
+      ]
+    };
   }
 
   /* ---------- DOM scaffold --------------------------------------------- */
@@ -419,8 +423,8 @@
       }));
       display.appendChild(seg("trend-vseg", [
         { v: "total",   label: "Total",   hint: "single aggregate line" },
-        { v: "lines",   label: "Lines",   hint: "one line per root directory" },
-        { v: "stacked", label: "Stacked", hint: "stacked area by root" }
+        { v: "lines",   label: "By path", hint: "one line per scan path" },
+        { v: "stacked", label: "Stacked", hint: "stacked area by scan path" }
       ], state.viewMode, function (v) {
         state.viewMode = v;
         saveState();
@@ -472,7 +476,9 @@
       '  <span class="trend-delta-title">Change since baseline</span>' +
       '  <span class="trend-delta-base mono" id="trend-delta-base"></span>' +
       "</div>" +
-      '<div class="trend-delta-slot" id="trend-delta-slot"></div>';
+      '<div class="trend-delta-slot" id="trend-delta-slot"></div>' +
+      /* per-root signed bars — populated by drawByPath in All scope */
+      '<div class="trend-bypath" id="trend-bypath" hidden></div>';
     container.appendChild(deltaSec);
 
     applyInteractModeClass(container);
@@ -847,12 +853,18 @@
     var msg = filteredCount === 0
       ? "No snapshots in this range."
       : "Only 1 snapshot in this range.";
+    /* Under a scope the sparsity is usually the path's, not the range's —
+     * say so instead of pointing at the range filter. */
+    var scope = container.__trendsScope || "";
+    var sub = scope
+      ? U.shortPath(scope, 40) + " appears in too few snapshots here."
+      : "Widen the filter for a trend.";
 
     var panel = document.createElement("div");
     panel.className = "trend-empty";
     panel.innerHTML =
       '<div class="trend-empty-msg">' + U.esc(msg) + "</div>" +
-      '<div class="trend-empty-sub">Widen the filter for a trend.</div>' +
+      '<div class="trend-empty-sub">' + U.esc(sub) + "</div>" +
       '<a href="#" class="trend-empty-cta">Show last 7 d →</a>';
     panel.querySelector(".trend-empty-cta").addEventListener("click", function (e) {
       e.preventDefault();
@@ -912,18 +924,26 @@
       ? [{ date: data.lead.date, size: data.lead.total }].concat(pts)
       : pts;
 
-    g.append("path").datum(linePts).attr("class", "trend-area")
+    /* Under a scan-path scope the single series wears that root's identity
+     * colour (same as its scope chip / legend chip / Δ bar) instead of the
+     * brand accent, so a scoped chart can't be mistaken for the total.
+     * Inline styles so they win over the class rules in app.css. */
+    var scopeColor = data.scopeColor || null;
+
+    var area = g.append("path").datum(linePts).attr("class", "trend-area")
       .attr("d", d3.area()
         .x(function (p) { return x(p.date); })
         .y0(ih)
         .y1(function (p) { return y(p.size); })
         .curve(d3.curveMonotoneX));
+    if (scopeColor) area.style("fill", scopeColor).style("opacity", 0.12);
 
-    g.append("path").datum(linePts).attr("class", "trend-line")
+    var line = g.append("path").datum(linePts).attr("class", "trend-line")
       .attr("d", d3.line()
         .x(function (p) { return x(p.date); })
         .y(function (p) { return y(p.size); })
         .curve(d3.curveMonotoneX));
+    if (scopeColor) line.style("stroke", scopeColor);
 
     /* Dots are now purely visual — interaction (click/hover) is delegated
      * to the unified brush layer added later in drawMain. This keeps the
@@ -931,7 +951,8 @@
     var dots = g.selectAll("g.trend-dot").data(pts).enter().append("g")
       .attr("class", "trend-dot")
       .attr("transform", function (p) { return "translate(" + x(p.date) + "," + y(p.size) + ")"; });
-    dots.append("circle").attr("class", "trend-pt").attr("r", 4);
+    var dotCircles = dots.append("circle").attr("class", "trend-pt").attr("r", 4);
+    if (scopeColor) dotCircles.style("fill", scopeColor);
 
     /* Hover callback consumed by attachBrush — renders the total-mode
      * tooltip (with delta-to-previous) at the nearest x. Identity-guarded
@@ -959,7 +980,9 @@
           '<div class="trend-tip-val mono">' + U.esc(U.humanBytes(p.size)) + dHtml + "</div>" +
           '<div class="trend-tip-hint">' + interactHint() + '</div>';
         tip.style.display = "block";
-        focus.show(x(p.date), xFmtPill(p.date), [{ y: y(p.size), color: "var(--accent)" }]);
+        focus.show(x(p.date), xFmtPill(p.date), [
+          { y: y(p.size), color: scopeColor || "var(--accent)" }
+        ]);
       }
       positionTip(container, tip, event);
     };
@@ -982,11 +1005,14 @@
       return data.lead ? [{ date: data.lead.date, v: carriedV }].concat(pts) : pts;
     }
 
-    /* faint total overlay (dashed, dim) so users always see the aggregate */
-    var totalPts = withLead(
-      data.dates.map(function (d, i) { return { date: d, v: data.total[i] }; }),
-      data.lead && data.lead.total);
-    g.append("path").datum(totalPts).attr("class", "trend-total-ghost").attr("d", line);
+    /* faint total overlay (dashed, dim) so users always see the aggregate —
+     * pointless with a single root (scoped view), where total === the line */
+    if (data.roots.length > 1) {
+      var totalPts = withLead(
+        data.dates.map(function (d, i) { return { date: d, v: data.total[i] }; }),
+        data.lead && data.lead.total);
+      g.append("path").datum(totalPts).attr("class", "trend-total-ghost").attr("d", line);
+    }
 
     /* per-root series */
     var series = g.append("g").attr("class", "trend-series-g");
@@ -1277,7 +1303,8 @@
   function drawLegend(container, data) {
     var leg = container.querySelector("#trend-legend");
     leg.innerHTML = "";
-    if (state.viewMode === "total") {
+    /* nothing to toggle in total mode or with a single root (scoped view) */
+    if (state.viewMode === "total" || data.roots.length < 2) {
       leg.hidden = true;
       return;
     }
@@ -1289,15 +1316,29 @@
       chip.type = "button";
       chip.className = "trend-chip" + (hidden ? " is-hidden" : "");
       chip.setAttribute("aria-pressed", hidden ? "false" : "true");
-      chip.title = r.path;
+      chip.title = r.path + " — click to toggle · alt-click to solo";
       chip.innerHTML =
         '<span class="trend-chip-dot" style="background:' + assignColor(r.path) + '"></span>' +
         '<span class="trend-chip-path">' + U.esc(U.shortPath(r.path, 36)) + '</span>' +
         '<span class="trend-chip-size mono">' + U.esc(U.humanBytes(r.latest)) + '</span>';
-      chip.addEventListener("click", function () {
-        var idx = state.hiddenRoots.indexOf(r.path);
-        if (idx >= 0) state.hiddenRoots.splice(idx, 1);
-        else state.hiddenRoots.push(r.path);
+      chip.addEventListener("click", function (e) {
+        if (e.altKey) {
+          /* solo: hide every other root; a second alt-click restores all
+           * (Grafana/Plotly legend convention). */
+          var others = data.roots
+            .map(function (o) { return o.path; })
+            .filter(function (p) { return p !== r.path; });
+          var soloed =
+            state.hiddenRoots.length === others.length &&
+            others.every(function (p) {
+              return state.hiddenRoots.indexOf(p) >= 0;
+            });
+          state.hiddenRoots = soloed ? [] : others;
+        } else {
+          var idx = state.hiddenRoots.indexOf(r.path);
+          if (idx >= 0) state.hiddenRoots.splice(idx, 1);
+          else state.hiddenRoots.push(r.path);
+        }
         saveState();
         drawAll(container);
       });
@@ -1577,6 +1618,97 @@
     attachBrush(g, data, x, iw, ih, container, { hover: deltaHover, leave: deltaLeave });
   }
 
+  /* ---------- Δ change-by-path bars ------------------------------------ *
+   * One signed bar per scan root under the Δ area chart: "which path grew?"
+   * answered without switching scope. Baseline/window semantics mirror the
+   * aggregate Δ above (carried lead value at the window start, else the
+   * first in-range snapshot; a root absent at the baseline contributes 0,
+   * exactly like the aggregate's sums). Clicking a row scopes to that path.
+   * Hidden when scoped (the area chart IS that path's answer), with a lone
+   * root, or when the Δ panel itself is hidden (sparse window). */
+  function drawByPath(container, data) {
+    var wrap = container.querySelector("#trend-bypath");
+    if (!wrap) return;
+    var sparse = !data || data.dates.length + (data.lead ? 1 : 0) < 2;
+    if (container.__trendsScope || sparse || data.roots.length < 2) {
+      wrap.hidden = true;
+      wrap.innerHTML = "";
+      return;
+    }
+
+    var rows = [];
+    data.roots.forEach(function (r) {
+      var baseV = data.lead
+        ? data.lead.roots[r.path] || 0
+        : r.values[0] || 0;
+      var lastV = r.values[r.values.length - 1] || 0;
+      /* skip roots with no presence anywhere in the window — a 0→0 row
+       * would only add noise for a path that predates the retained history */
+      var present = data.lead && data.lead.roots[r.path] != null;
+      for (var i = 0; i < r.values.length && !present; i++) {
+        if (r.values[i] != null) present = true;
+      }
+      if (!present) return;
+      rows.push({ path: r.path, delta: lastV - baseV });
+    });
+    if (!rows.length) {
+      wrap.hidden = true;
+      wrap.innerHTML = "";
+      return;
+    }
+    rows.sort(function (a, b) {
+      return b.delta - a.delta;
+    });
+    var maxAbs =
+      rows.reduce(function (m, r) {
+        return Math.max(m, Math.abs(r.delta));
+      }, 0) || 1;
+
+    wrap.hidden = false;
+    wrap.innerHTML =
+      '<div class="trend-bypath-title">Change by path</div>';
+    rows.forEach(function (row) {
+      var sgn = row.delta > 0 ? "pos" : row.delta < 0 ? "neg" : "zero";
+      var val =
+        row.delta === 0
+          ? "± 0"
+          : (row.delta > 0 ? "+" : "−") + U.humanBytes(Math.abs(row.delta));
+      /* half-track per side: 100% of half = the largest |Δ| */
+      var w = ((Math.abs(row.delta) / maxAbs) * 50).toFixed(1);
+
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "trend-bp-row";
+      b.title = "Scope everything to " + row.path;
+      b.setAttribute(
+        "aria-label",
+        row.path + " — " + val + " since baseline. Scope to this path."
+      );
+      b.innerHTML =
+        '<span class="trend-bp-path">' +
+        '<span class="trend-bp-dot" style="background:' +
+        assignColor(row.path) +
+        '"></span>' +
+        '<span class="mono">' +
+        U.esc(U.shortPath(row.path, 32)) +
+        "</span></span>" +
+        '<span class="trend-bp-track"><span class="trend-bp-bar ' +
+        sgn +
+        '" style="width:' +
+        w +
+        '%"></span></span>' +
+        '<span class="trend-bp-val mono ' +
+        sgn +
+        '">' +
+        U.esc(val) +
+        "</span>";
+      b.addEventListener("click", function () {
+        if (container.__trendsOnScope) container.__trendsOnScope(row.path);
+      });
+      wrap.appendChild(b);
+    });
+  }
+
   /* ---------- orchestration ------------------------------------------- */
 
   function drawAll(container) {
@@ -1594,10 +1726,15 @@
      * / drawDelta -- cache the numeric coercion once per draw rather than
      * rebuilding the array in each closure. */
     data.dateMs = data.dates.map(function (d) { return +d; });
+    /* scoped identity colour, consumed by drawTotal (line/area/dots/marks) */
+    data.scopeColor = container.__trendsScope
+      ? assignColor(container.__trendsScope)
+      : null;
     updateSnapCount(container, raw, data);
     drawMain(container, data);
     drawLegend(container, data);
     drawDelta(container, data);
+    drawByPath(container, data);
   }
 
   function updateSnapCount(container, raw, filtered) {
@@ -1612,7 +1749,7 @@
     var rLen = raw.dates.length;
 
     if (fLen === rLen) {
-      el.textContent = rLen + " snapshots";
+      el.textContent = rLen + (rLen === 1 ? " snapshot" : " snapshots");
       return;
     }
 
@@ -1636,8 +1773,12 @@
     }
   }
 
-  function render(container, snapshots) {
+  function render(container, snapshots, opts) {
     if (!container) return false;
+    opts = opts || {};
+    var scope = opts.scope || "";
+    container.__trendsScope = scope;
+    container.__trendsOnScope = opts.onScopeChange || null;
 
     /* skip re-render if the snapshot list is unchanged. Sample every ts +
      * total so a re-scan of an existing ts (same key, new bytes) or a
@@ -1648,9 +1789,10 @@
      * files shuffled between roots, one root grew and another shrank by the
      * same amount — does not hit the cache and leave the Lines/Stacked/legend
      * views drawn from old data. (Sampling only the first root missed swaps
-     * confined to later roots.) */
+     * confined to later roots.) The active scope is part of the signature so
+     * a scope flip on identical data still redraws. */
     var snaps = (snapshots || []).filter(function (s) { return s.ts; });
-    var sig = snaps.length + "|" + snaps.map(function (s) {
+    var sig = "s:" + scope + "|" + snaps.length + "|" + snaps.map(function (s) {
       var rs = Array.isArray(s.roots) ? s.roots : [];
       var rsig = rs.map(function (r) {
         return (r.path || "") + "=" + (r.size_actual || "");
@@ -1662,7 +1804,12 @@
       return true; /* still drawn */
     }
 
+    /* Scope AFTER flatten: the "≥2 dated snapshots" gate stays a property of
+     * the history as a whole, so a scoped path that appears in only one
+     * snapshot renders the panel with its sparse message instead of hiding
+     * the whole section (and its scope-escape controls) entirely. */
     var data = flatten(snaps);
+    if (data && scope) data = applyScopeData(data, scope);
     if (!data) {
       lastSig = null;
       if (resizeObs) { resizeObs.disconnect(); resizeObs = null; }
