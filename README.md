@@ -9,12 +9,18 @@ snapshots, and serves a single-page web UI with:
   reloads), tooltips on *every* slice including tiny ones, a breadcrumb trail
   and a details side panel. Large filesystems are pre-aggregated for an instant
   first paint and finer detail is lazy-loaded on demand.
+- **Storage over time** — total / by-path / stacked trend charts with
+  time-range presets and drag-to-zoom, plus a change-since-baseline panel with
+  per-path change bars.
+- **Scan comparison** — pick any two snapshots for a delta-coloured sunburst,
+  per-path change subtotals and a sortable, filterable change table.
+- **Per-path scoping** — with several `STRATA_SCAN_PATHS` configured, a scope
+  rail narrows the whole dashboard (trends, change since baseline, snapshot
+  cards) and the compare page to one path, and the sunburst gains a ROOT
+  switcher. The scope rides in the URL, so scoped views are shareable.
 - **Per-scan statistics** — every snapshot keeps a frozen telemetry panel
   (duration, file/dir counts, sizes, I/O totals, throughput) that stays visible
   long after the scan finishes, plus a live panel while a scan is running.
-
-> Comparison of two scans (delta-colored sunburst + diff table) is planned as a
-> follow-up phase.
 
 ## Deploy
 
