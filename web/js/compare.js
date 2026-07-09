@@ -9,7 +9,10 @@
  *   window.ComparePage.render(containerEl, {
  *     base: "<ts>" | "",          // baseline snapshot ts
  *     cur:  "<ts>" | "",          // current snapshot ts
- *     onNavigate: (base, cur) => {}  // user changed the selection
+ *     scope: "<root path>" | "",  // narrow the diff to one scan path
+ *     onNavigate: (base, cur, scope) => {},  // user changed the selection
+ *     onScopeSync: (base, cur, scope) => {}  // scope flipped in place — sync
+ *                                            // the URL without a re-route
  *   });
  *
  * Visual language deliberately mirrors app.css: monospace numerics, terminal
@@ -127,9 +130,14 @@
     var state = {
       container: containerEl,
       onNavigate: onNavigate,
+      onScopeSync:
+        typeof opts.onScopeSync === "function"
+          ? opts.onScopeSync
+          : function () {},
       snapshots: [], // newest-first list from op=snapshots
       base: opts.base || "", // selected baseline ts
       cur: opts.cur || "", // selected current ts
+      scope: opts.scope || "", // scan-path scope ("" = all paths)
       result: null, // op=compare payload
       metric: METRICS.actual, // active metric
       sb: null, // Sunburst handle
@@ -195,6 +203,18 @@
         }
         /* Guard: a baseline must not be newer than the current scan. */
         normalizeSelection(state);
+
+        /* Validate a URL-supplied scope up front so everything downstream
+         * (threshold ceiling, summary, table) sees the settled value. */
+        if (
+          state.scope &&
+          !U.rootUnion(state.snapshots).some(function (r) {
+            return r.path === state.scope;
+          })
+        ) {
+          state.scope = "";
+          state.onScopeSync(state.base, state.cur, "");
+        }
 
         done();
       })
@@ -274,10 +294,116 @@
       });
   }
 
+  /* ---- scoped view ------------------------------------------------------- *
+   * op=compare always returns the full multi-root diff; a scan-path scope is
+   * a pure client-side narrowing of it — no extra requests. */
+
+  /* The scoped root's own node in the diff tree (first ring), or null. */
+  function scopedTreeNode(state) {
+    if (!state.scope) return null;
+    var kids = (state.result && state.result.tree && state.result.tree.children) || [];
+    for (var i = 0; i < kids.length; i++) {
+      if (kids[i] && kids[i].path === state.scope) return kids[i];
+    }
+    return null;
+  }
+
+  /* The change list the summary/table should see: everything, or only rows
+   * under the scoped root (boundary-aware: /foo must not match /foobar). */
+  function activeChanges(state) {
+    var all = (state.result && state.result.changes) || [];
+    if (!state.scope) return all;
+    var prefix = state.scope + "/";
+    return all.filter(function (c) {
+      var p = c.path || "";
+      return p === state.scope || p.indexOf(prefix) === 0;
+    });
+  }
+
+  /* Status tally over a scoped subtree — same "real node" rule as diff.py's
+   * _collect (path-carrying, non-(other)), so the scoped chips mean exactly
+   * what the all-paths chips mean. */
+  function countScoped(node) {
+    var counts = { grew: 0, shrank: 0, added: 0, removed: 0, unchanged: 0 };
+    (function walk(n) {
+      if (!n) return;
+      if (n.path && !n.other) {
+        var st = n.status || "unchanged";
+        counts[st] = (counts[st] || 0) + 1;
+      }
+      (n.children || []).forEach(walk);
+    })(node);
+    return counts;
+  }
+
+  /* Summary numbers for the active scope. All paths → the API's summary;
+   * scoped → synthesized from the root's diff node, whose d_ and base_
+   * fields are exactly the scoped totals. */
+  function activeSummary(state) {
+    var summary = (state.result && state.result.summary) || {};
+    if (!state.scope) {
+      return {
+        delta: summary.delta || {},
+        baseTotal: summary.base_total || {},
+        counts: summary.counts || {}
+      };
+    }
+    var sub = scopedTreeNode(state);
+    if (!sub) return null; /* scoped path absent from this pair of scans */
+    return {
+      delta: {
+        size_actual: num(sub.d_actual),
+        size_apparent: num(sub.d_apparent),
+        count: num(sub.d_count)
+      },
+      baseTotal: {
+        size_actual: num(sub.base_actual),
+        size_apparent: num(sub.base_apparent),
+        count: num(sub.base_count)
+      },
+      counts: countScoped(sub)
+    };
+  }
+
+  /* Scope change → persist, sync the URL in place, re-render the scoped
+   * sections (summary, chart, table) without refetching or rebuilding the
+   * scan selectors. */
+  function setScope(state, path) {
+    path = path || "";
+    if (path === state.scope) return;
+    state.scope = path;
+    U.scopeSave(path);
+    state.onScopeSync(state.base, state.cur, path);
+    renderScopeSlot(state);
+    rebuildSections(state, false); /* a new scope defines its own focus */
+  }
+
+  /* Rebuild the scope rail. Also validates a URL-supplied scope against the
+   * known roots — an unknown path silently falls back to all paths. */
+  function renderScopeSlot(state) {
+    var slot = state.container.querySelector("#cmp-scope-slot");
+    if (!slot) return;
+    var roots = U.rootUnion(state.snapshots);
+    if (
+      state.scope &&
+      !roots.some(function (r) {
+        return r.path === state.scope;
+      })
+    ) {
+      state.scope = "";
+      state.onScopeSync(state.base, state.cur, "");
+    }
+    slot.innerHTML = "";
+    var rail = U.scopeRail(roots, state.scope, function (p) {
+      setScope(state, p);
+    });
+    if (rail) slot.appendChild(rail);
+  }
+
   /* Slider ceiling = the largest |self-delta| across the chosen metric, so
    * the noise filter spans the full range of real changes. */
   function computeThresholdCeiling(state) {
-    var changes = (state.result && state.result.changes) || [];
+    var changes = activeChanges(state);
     var m = state.metric;
     var max = 0;
     changes.forEach(function (c) {
@@ -342,6 +468,9 @@
     slot.innerHTML = "";
 
     slot.appendChild(buildSelectors(state));
+    /* rail after the selectors exist — it also validates a URL scope, and
+     * the sections built below must see the validated value */
+    renderScopeSlot(state);
     slot.appendChild(buildSummary(state));
     slot.appendChild(buildSunburstSection(state));
     slot.appendChild(buildTableSection(state));
@@ -364,20 +493,23 @@
     state.sb = null;
   }
 
-  /* Re-render only the metric-dependent sections (summary, sunburst, table).
-   * The scan selectors don't change shape when the metric toggles, so
-   * rebuilding them costs a snapshot-list iteration for nothing and would
+  /* Re-render only the data-dependent sections (summary, sunburst, table).
+   * The scan selectors don't change shape when the metric or scope toggles,
+   * so rebuilding them costs a snapshot-list iteration for nothing and would
    * also tear down any open <select> menu mid-interaction. */
   function rerenderMetric(state) {
+    rebuildSections(state, true);
+  }
+
+  /* `preserveFocus`: a metric toggle is a pure re-render, so the user's
+   * drill-in survives it; a scope change deliberately re-focuses on the
+   * scoped root instead (buildSunburstSection applies it). */
+  function rebuildSections(state, preserveFocus) {
     computeThresholdCeiling(state);
     var slot = state.container.querySelector("#cmp-body");
     if (!slot) return;
-    /* Preserve the user's drill-in across the destroy+rebuild — without
-     * this, toggling Actual ↔ Apparent ↔ Items snaps the chart back to
-     * the synthetic root even though the metric toggle is meant to be
-     * a pure re-render. */
     var savedFocus =
-      state.sb && typeof state.sb.getFocusPath === "function"
+      preserveFocus && state.sb && typeof state.sb.getFocusPath === "function"
         ? state.sb.getFocusPath()
         : "";
     destroySunburstSafe(state);
@@ -476,6 +608,11 @@
     metricWrap.appendChild(toggle);
     wrap.appendChild(metricWrap);
 
+    /* --- scan-path scope (chip rail, shared with the dashboard) --- */
+    var scopeSlot = el("div", "cmp-scope-row");
+    scopeSlot.id = "cmp-scope-slot";
+    wrap.appendChild(scopeSlot);
+
     return wrap;
   }
 
@@ -519,7 +656,7 @@
   /* Apply guards then notify the router; app.js re-invokes render(). */
   function commitSelection(state) {
     normalizeSelection(state);
-    state.onNavigate(state.base, state.cur);
+    state.onNavigate(state.base, state.cur, state.scope);
   }
 
   /* ----------------------------------------------------------------------- *
@@ -528,16 +665,29 @@
   function buildSummary(state) {
     var r = state.result || {};
     var m = state.metric;
-    var summary = r.summary || {};
-    var delta = summary.delta || {};
-    var counts = summary.counts || {};
+
+    /* All paths → the API summary; scoped → synthesized from the scoped
+     * root's diff node. Null = the scoped path isn't in this pair of scans. */
+    var sc = activeSummary(state);
+    if (!sc) {
+      var gone = el("section", "cmp-summary cmp-reveal");
+      var goneBox = el("div", "empty");
+      goneBox.innerHTML =
+        '<div class="empty-title">' +
+        U.esc(U.shortPath(state.scope, 48)) +
+        " is not in this comparison</div>" +
+        '<div class="empty-msg">Neither of the selected scans contains this ' +
+        "path. Pick other scans, or switch the scope back to all paths.</div>";
+      gone.appendChild(goneBox);
+      return gone;
+    }
+    var counts = sc.counts;
 
     /* summary.delta is keyed like a total (size_actual/size_apparent/count),
      * not like a diff-tree node (d_actual/...) — use the total field. */
-    var dVal = num(delta[metricTotalField(m)]);
-    var baseTotal = summary.base_total || {};
+    var dVal = num(sc.delta[metricTotalField(m)]);
     /* baseline total for the chosen metric — used for the headline Δ%. */
-    var baseMetricVal = num(baseTotal[metricTotalField(m)]);
+    var baseMetricVal = num(sc.baseTotal[metricTotalField(m)]);
 
     var band = el("section", "cmp-summary cmp-reveal");
     band.classList.add(dVal > 0 ? "is-up" : dVal < 0 ? "is-down" : "is-flat");
@@ -569,7 +719,7 @@
     hero.appendChild(heroCaption);
     band.appendChild(hero);
 
-    /* --- baseline → current labels --- */
+    /* --- baseline → current labels (+ active scope) --- */
     var span = el("div", "cmp-summary-span");
     span.innerHTML =
       '<span class="cmp-span-label">BASELINE</span>' +
@@ -580,7 +730,16 @@
       '<span class="cmp-span-label">CURRENT</span>' +
       '<span class="cmp-span-ts mono">' +
       U.esc(r.cur_label || r.cur || state.cur) +
-      "</span>";
+      "</span>" +
+      (state.scope
+        ? '<span class="scope-tag" title="' +
+          U.esc(state.scope) +
+          '"><span class="scope-tag-dot" style="background:' +
+          U.rootColor(state.scope) +
+          '"></span><span class="scope-tag-path mono">' +
+          U.esc(U.shortPath(state.scope, 40)) +
+          "</span></span>"
+        : "");
     band.appendChild(span);
 
     /* --- change counts --- */
@@ -591,10 +750,14 @@
     countRow.appendChild(countChip("removed", counts.removed, "removed"));
     band.appendChild(countRow);
 
+    /* --- change by path (All scope, multi-root) --- */
+    var subtotals = buildSubtotalBand(state);
+    if (subtotals) band.appendChild(subtotals);
+
     /* --- biggest grower / biggest space freed --- */
     /* Directory-only: the headline highlights stay about directories so a single
      * big file can't displace the directory story (file rows live in the table). */
-    var changes = (r.changes || []).filter(function (c) {
+    var changes = activeChanges(state).filter(function (c) {
       return c.kind !== "file";
     });
     if (changes.length) {
@@ -632,6 +795,68 @@
     if (m.key === "actual") return "size_actual";
     if (m.key === "apparent") return "size_apparent";
     return "count";
+  }
+
+  /* "Change by path" band: one signed bar per scan root, from the diff
+   * tree's first ring — which pool grew, before any directory detail.
+   * Clicking a row scopes the whole comparison to that path. All-paths
+   * multi-root view only; a scoped or single-root diff needs no band. */
+  function buildSubtotalBand(state) {
+    if (state.scope) return null;
+    var m = state.metric;
+    var roots = (
+      (state.result && state.result.tree && state.result.tree.children) ||
+      []
+    ).filter(function (c) {
+      return c && c.path && !c.other;
+    });
+    if (roots.length < 2) return null;
+
+    var rows = roots.map(function (c) {
+      return { path: c.path, delta: num(c[m.dField]) };
+    });
+    rows.sort(function (a, b) {
+      return b.delta - a.delta;
+    });
+    var maxAbs =
+      rows.reduce(function (mx, rw) {
+        return Math.max(mx, Math.abs(rw.delta));
+      }, 0) || 1;
+
+    var band = el("div", "cmp-subtotals");
+    rows.forEach(function (rw) {
+      var sgn = rw.delta > 0 ? "pos" : rw.delta < 0 ? "neg" : "zero";
+      var val =
+        rw.delta === 0
+          ? "± 0"
+          : (rw.delta > 0 ? "+" : "−") + m.fmt(rw.delta);
+      /* half-track per side: 100% of half = the largest |Δ| */
+      var w = ((Math.abs(rw.delta) / maxAbs) * 50).toFixed(1);
+      var b = el("button", "cmp-st-row");
+      b.type = "button";
+      b.title = "Scope this comparison to " + rw.path;
+      b.innerHTML =
+        '<span class="cmp-st-path"><span class="trend-bp-dot" style="background:' +
+        U.rootColor(rw.path) +
+        '"></span><span class="mono">' +
+        U.esc(U.shortPath(rw.path, 34)) +
+        "</span></span>" +
+        '<span class="trend-bp-track"><span class="trend-bp-bar ' +
+        sgn +
+        '" style="width:' +
+        w +
+        '%"></span></span>' +
+        '<span class="trend-bp-val mono ' +
+        sgn +
+        '">' +
+        U.esc(val) +
+        "</span>";
+      b.addEventListener("click", function () {
+        setScope(state, rw.path);
+      });
+      band.appendChild(b);
+    });
+    return band;
   }
 
   function countChip(label, n, kind) {
@@ -751,6 +976,9 @@
       }
     });
     state.sb.setData(tree);
+    /* Scoped: open the chart already focused on the scoped root — context
+     * (the other roots) stays one centre-click away, like the scan page. */
+    if (state.scope) state.sb.focusByPath(state.scope);
 
     return section;
   }
@@ -1006,14 +1234,20 @@
       '<span class="section-meta mono" id="cmp-row-count"></span>';
     section.appendChild(head);
 
-    var changes = (state.result && state.result.changes) || [];
+    var changes = activeChanges(state);
 
     if (!changes.length) {
       var empty = el("div", "empty");
       empty.innerHTML =
         '<div class="empty-title">No directory changes</div>' +
-        '<div class="empty-msg">These two scans are identical at directory ' +
-        "granularity — nothing grew, shrank, was added or removed.</div>";
+        '<div class="empty-msg">' +
+        (state.scope
+          ? "Nothing under " +
+            U.esc(U.shortPath(state.scope, 48)) +
+            " grew, shrank, was added or removed between these two scans."
+          : "These two scans are identical at directory granularity — " +
+            "nothing grew, shrank, was added or removed.") +
+        "</div>";
       section.appendChild(empty);
       return section;
     }
@@ -1177,7 +1411,7 @@
     if (!nodes) return;
     var tbody = nodes.tbody;
     var m = state.metric;
-    var all = (state.result && state.result.changes) || [];
+    var all = activeChanges(state);
 
     /* filter */
     var rows = all.filter(function (c) {
