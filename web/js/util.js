@@ -200,6 +200,227 @@
     return "/" + parts[0] + "/…/" + tail;
   }
 
+  /* ---- root identity colors --------------------------------------------
+   * One stable colour per scan root, shared by every surface that names a
+   * root (trend series, legend chips, the scope rail, Δ-by-path bars, the
+   * compare subtotal band) so a root is the same colour everywhere.
+   *
+   * d3.schemeTableau10 with the brand accent (#58a6ff) reserved for the
+   * all-paths total. The 5th slot of Tableau10 ("#59a14f", green) is moved
+   * last to avoid colliding with the delta-panel positive-fill green
+   * (--green = #3fb950). The accent-blue Tableau slot ("#4e79a7") is kept,
+   * since it is dark enough to not be confused with our brand accent. */
+  var ROOT_PALETTE = [
+    "#e15759", /* red       */
+    "#f28e2b", /* orange    */
+    "#76b7b2", /* teal      */
+    "#4e79a7", /* dark blue */
+    "#edc948", /* yellow    */
+    "#b07aa1", /* purple    */
+    "#ff9da7", /* pink      */
+    "#9c755f", /* brown     */
+    "#bab0ac", /* warm grey */
+    "#59a14f"  /* green — last because it overlaps the delta panel */
+  ];
+  var COLORS_LS = "strata.rootcolors.v1";
+
+  var _rootColorMap = null;
+  function _loadRootColors() {
+    if (_rootColorMap) return _rootColorMap;
+    var m = null;
+    try {
+      m = JSON.parse(global.localStorage.getItem(COLORS_LS));
+    } catch (_) {
+      /* private mode / malformed — fall through */
+    }
+    if (!m || typeof m !== "object") {
+      /* one-time migration: colour slots lived inside the trends panel state
+       * before the scope feature promoted them app-wide. */
+      try {
+        var legacy = JSON.parse(global.localStorage.getItem("strata.trends.v1"));
+        if (legacy && legacy.colors && typeof legacy.colors === "object") {
+          m = legacy.colors;
+        }
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    _rootColorMap = m && typeof m === "object" ? m : {};
+    return _rootColorMap;
+  }
+  function _saveRootColors() {
+    try {
+      global.localStorage.setItem(COLORS_LS, JSON.stringify(_rootColorMap));
+    } catch (_) {
+      /* private mode / quota — non-fatal */
+    }
+  }
+
+  /* Stable palette assignment: a root keeps its colour across sessions.
+   * New roots take the next free slot; once all are used, cycle modulo
+   * ROOT_PALETTE.length. */
+  function rootColor(path) {
+    var map = _loadRootColors();
+    if (map[path] != null) return ROOT_PALETTE[map[path] % ROOT_PALETTE.length];
+    var used = {};
+    Object.keys(map).forEach(function (k) {
+      used[map[k]] = true;
+    });
+    var i = 0;
+    while (used[i] && i < ROOT_PALETTE.length) i++;
+    if (i >= ROOT_PALETTE.length) {
+      /* all taken; pick the lowest-numbered slot (modular cycle) */
+      i = Object.keys(map).length % ROOT_PALETTE.length;
+    }
+    map[path] = i;
+    _saveRootColors();
+    return ROOT_PALETTE[i];
+  }
+
+  /* ---- scan-path scope ---------------------------------------------------
+   * The global "which scan path am I looking at" state. "" = all paths.
+   * The URL is the source of truth (app.js owns parsing/writing the hash);
+   * localStorage only echoes the last choice so a fresh "#/" restores it. */
+  var SCOPE_LS = "strata.scope.v1";
+
+  function scopeLoad() {
+    try {
+      return global.localStorage.getItem(SCOPE_LS) || "";
+    } catch (_) {
+      return "";
+    }
+  }
+  function scopeSave(path) {
+    try {
+      if (path) global.localStorage.setItem(SCOPE_LS, path);
+      else global.localStorage.removeItem(SCOPE_LS);
+    } catch (_) {
+      /* private mode / quota — non-fatal */
+    }
+  }
+
+  /* Union of scan roots across a snapshot list (newest first), each with the
+   * size from the newest snapshot that contains it. Sorted by size desc, so
+   * chip order matches the trend legend. Feeds the scope rail. */
+  function rootUnion(snapshots) {
+    var byPath = {};
+    var order = [];
+    (snapshots || []).forEach(function (s) {
+      (Array.isArray(s.roots) ? s.roots : []).forEach(function (r) {
+        if (!r || !r.path) return;
+        if (!byPath[r.path]) {
+          byPath[r.path] = { path: r.path, size_actual: Number(r.size_actual) || 0 };
+          order.push(byPath[r.path]);
+        }
+      });
+    });
+    order.sort(function (a, b) {
+      return b.size_actual - a.size_actual;
+    });
+    return order;
+  }
+
+  /* Build the scope rail (variant A): [All paths] + one chip per root, each
+   * with its identity dot and latest size. Collapses to a <select> above
+   * SCOPE_CHIP_MAX roots. Returns null when there is nothing to scope
+   * (fewer than 2 roots) so single-path deployments pay zero UI cost.
+   *   roots    — rootUnion() output
+   *   current  — active scope ("" = all)
+   *   onChange — function(path) — "" means back to all; clicking the active
+   *              root chip also returns to all. */
+  var SCOPE_CHIP_MAX = 6;
+
+  function scopeRail(roots, current, onChange) {
+    if (!roots || roots.length < 2) return null;
+    var rail = document.createElement("div");
+    rail.className = "scope-rail";
+    var lab = document.createElement("span");
+    lab.className = "scope-rail-label";
+    lab.textContent = "Scope";
+    rail.appendChild(lab);
+
+    var total = roots.reduce(function (a, r) {
+      return a + (r.size_actual || 0);
+    }, 0);
+
+    if (roots.length > SCOPE_CHIP_MAX) {
+      /* dropdown fallback — same state, compact at high path counts */
+      var sel = document.createElement("select");
+      sel.className = "scope-select mono";
+      sel.setAttribute("aria-label", "scan path scope");
+      var optAll = document.createElement("option");
+      optAll.value = "";
+      optAll.textContent = "All paths (" + humanBytes(total) + ")";
+      sel.appendChild(optAll);
+      roots.forEach(function (r) {
+        var opt = document.createElement("option");
+        opt.value = r.path;
+        opt.textContent = r.path + " (" + humanBytes(r.size_actual) + ")";
+        sel.appendChild(opt);
+      });
+      sel.value = current || "";
+      sel.addEventListener("change", function () {
+        onChange(sel.value);
+      });
+      rail.appendChild(sel);
+      return rail;
+    }
+
+    function chip(path, label, color, size) {
+      var active = (current || "") === path;
+      var b = document.createElement("button");
+      b.type = "button";
+      b.className = "scope-chip" + (active ? " is-active" : "");
+      b.setAttribute("aria-pressed", active ? "true" : "false");
+      if (path) {
+        b.title = active
+          ? path + " — click to show all paths"
+          : "Scope everything to " + path;
+        if (active) b.style.borderColor = color;
+      } else {
+        b.title = "Show every scan path combined";
+      }
+      var dot = document.createElement("span");
+      dot.className = "scope-chip-dot";
+      dot.style.background = color;
+      b.appendChild(dot);
+      var p = document.createElement("span");
+      p.className = "scope-chip-path" + (path ? " mono" : "");
+      p.textContent = label;
+      b.appendChild(p);
+      if (size != null) {
+        var sz = document.createElement("span");
+        sz.className = "scope-chip-size mono";
+        sz.textContent = humanBytes(size);
+        b.appendChild(sz);
+      }
+      b.addEventListener("click", function () {
+        /* clicking the active root chip returns to All */
+        onChange(active ? "" : path);
+      });
+      b.addEventListener("keydown", function (e) {
+        if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+        e.preventDefault();
+        var btns = Array.prototype.slice.call(
+          rail.querySelectorAll(".scope-chip")
+        );
+        var i = btns.indexOf(b);
+        var j =
+          (i + (e.key === "ArrowRight" ? 1 : -1) + btns.length) % btns.length;
+        btns[j].focus();
+      });
+      return b;
+    }
+
+    rail.appendChild(chip("", "All paths", "var(--accent)", total));
+    roots.forEach(function (r) {
+      rail.appendChild(
+        chip(r.path, shortPath(r.path, 36), rootColor(r.path), r.size_actual)
+      );
+    });
+    return rail;
+  }
+
   /* ---- shared API + UI fragments --------------------------------------
    * The dashboard and the compare page both poll the same CGI endpoint
    * and need the same spinner / error-box fragments; kept here so the two
@@ -300,6 +521,11 @@
     esc: esc,
     shortPath: shortPath,
     textWidth: textWidth,
+    rootColor: rootColor,
+    rootUnion: rootUnion,
+    scopeLoad: scopeLoad,
+    scopeSave: scopeSave,
+    scopeRail: scopeRail,
     apiGet: apiGet,
     spinnerHTML: spinnerHTML,
     spinnerEl: spinnerEl,
