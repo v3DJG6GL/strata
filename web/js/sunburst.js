@@ -117,6 +117,14 @@
         [["2", "2"], ["3", "3"], ["4", "4"], ["5", "5"]], "2") +
       ctlGroup("SCALE", "scale",
         [["s", "S"], ["m", "M"], ["l", "L"], ["full", "Full"]], "l");
+    /* "ROOT" switcher — populated per-dataset by rebuildRootCtl() (the scan
+     * roots are data, not static config like the groups above). First in the
+     * toolbar; hidden for single-root scans and in compare mode (the compare
+     * page carries its own page-level scope control). */
+    var rootCtl = el("div", "sb-ctl sb-ctl-root");
+    rootCtl.style.display = "none";
+    toolbar.insertBefore(rootCtl, toolbar.firstChild);
+
     chartWrap.appendChild(toolbar);
     /* compare mode lays the chart out itself — hide the layout-only controls */
     if (opts.compareMode) {
@@ -1910,6 +1918,7 @@
       foldPass(p);
       clearHover();
       render(true);
+      syncRootCtl(); // keep the toolbar ROOT switcher on the focused root
 
       /* notify the router (skipped when the router itself drove this focus) */
       if (!silent && opts.onFocusChange) {
@@ -2024,6 +2033,10 @@
       } else {
         render(false);
       }
+      /* every rebuild flows through here (setData / relayout / grafts) — the
+       * ROOT switcher tracks the dataset, and its active state the focus */
+      rebuildRootCtl();
+      syncRootCtl();
     }
 
     /* Recompute geometry for a new ring count. The following relayout() rebuilds
@@ -2036,6 +2049,93 @@
         band = HOLE_R;
       }
       syncHoleDisc();
+    }
+
+    /* ---- root switcher --------------------------------------------------- */
+    /* Rebuild the ROOT control from the current dataset's first ring. Built
+     * with createElement/textContent (never innerHTML) — root paths are
+     * filesystem data and must not be interpolated into markup. */
+    function rebuildRootCtl() {
+      var roots = ((rawRoot && rawRoot.children) || []).filter(function (c) {
+        return c && c.path && !c.other;
+      });
+      if (opts.compareMode || roots.length < 2) {
+        rootCtl.style.display = "none";
+        rootCtl.innerHTML = "";
+        return;
+      }
+      rootCtl.style.display = "";
+      rootCtl.innerHTML = "";
+      var lab = el("span", "sb-ctl-label");
+      lab.textContent = "ROOT";
+      lab.title = "Focus the chart on one scan path.";
+      rootCtl.appendChild(lab);
+      var tog = el("div", "sb-toggle");
+      tog.setAttribute("role", "group");
+      [{ path: "", label: "All" }]
+        .concat(
+          roots.map(function (c) {
+            return { path: c.path, label: U.shortPath(c.path, 24) };
+          })
+        )
+        .forEach(function (it) {
+          var b = el("button");
+          b.type = "button";
+          b.dataset.rootPath = it.path;
+          b.textContent = it.label;
+          if (it.path) b.title = it.path;
+          b.addEventListener("click", function () {
+            focusRoot(it.path);
+          });
+          tog.appendChild(b);
+        });
+      rootCtl.appendChild(tog);
+      syncRootCtl();
+    }
+
+    /* Active state follows the CURRENT focus — however it was reached (root
+     * button, arc click, breadcrumb, centre zoom-out, deep link): the active
+     * button is the scan root the focus lives under; the scan root itself
+     * (depth 0) reads as "All". */
+    function syncRootCtl() {
+      var tog = rootCtl.querySelector(".sb-toggle");
+      if (!tog) return;
+      var anc = focusNode;
+      while (anc && anc.depth > 1) anc = anc.parent;
+      var activePath =
+        anc && anc.depth === 1 && anc.data ? anc.data.path || "" : "";
+      tog.querySelectorAll("button").forEach(function (b) {
+        b.classList.toggle(
+          "active",
+          (b.dataset.rootPath || "") === activePath
+        );
+      });
+    }
+
+    /* Toolbar-driven focus: like focusByPath but NON-silent, so the router
+     * hears the change and writes it into the URL hash. */
+    function focusRoot(path) {
+      if (!root) return;
+      if (!path) {
+        if (focusNode !== root) zoomTo(root);
+        return;
+      }
+      var hit = findHierByPath(path);
+      if (!hit) return;
+      var data = hit.data || {};
+      /* same guard as focusByPath: an unexpanded truncated node must fetch
+       * (lazyLoad zooms after grafting) rather than zoom to a dead view. */
+      if (
+        data.truncated &&
+        opts.fetchSubtree &&
+        data.path != null &&
+        !subtreeCache[data.path] &&
+        !hasRealChildren(data)
+      ) {
+        lazyLoad(hit);
+        return;
+      }
+      if (hit !== focusNode) zoomTo(hit);
     }
 
     function onToolbarClick(e) {
